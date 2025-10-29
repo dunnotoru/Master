@@ -33,8 +33,6 @@ class ClientHandler : IDisposable
 
     public async Task ListenAsync(CancellationToken cancellation)
     {
-        // CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-
         try
         {
             byte[] buffer = new byte[1024];

@@ -2,8 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
+using MemoryPack;
 using Shared;
 
 namespace Master;
@@ -11,9 +10,29 @@ namespace Master;
 public class MasterServer : IDisposable
 {
     private int _count = 0;
-    private List<ClientHandler> _clients = new List<ClientHandler>();
+    private ConcurrentDictionary<int, WebSocket> _clients = new ConcurrentDictionary<int, WebSocket>();
     private ConcurrentQueue<Assignment> _pendingAssignments = new ConcurrentQueue<Assignment>();
-    private object _clientsLock = new object();
+
+    private ConcurrentDictionary<WebSocket, Assignment?> _assignmentsInWork =
+        new ConcurrentDictionary<WebSocket, Assignment?>();
+
+    private ConcurrentDictionary<Guid, Job> _jobs =
+        new ConcurrentDictionary<Guid, Job>();
+
+    public event Action<int>? SlaveConnected;
+    public event Action<int>? SlaveDisconnected;
+    public event Action? JobDone;
+
+    private Stopwatch _stopwatch = new Stopwatch();
+
+
+    private enum ServerState
+    {
+        Accepting = 0,
+        Ignoring
+    }
+
+    private ServerState _state;
 
     public async Task Start(string listenerPrefix, CancellationToken cancellationToken)
     {
@@ -24,6 +43,13 @@ public class MasterServer : IDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             HttpListenerContext listenerContext = await listener.GetContextAsync();
+
+            if (_state == ServerState.Ignoring)
+            {
+                listenerContext.Response.StatusCode = 404;
+                listenerContext.Response.Close();
+                continue;
+            }
 
             if (listenerContext.Request.IsWebSocketRequest)
             {
@@ -41,7 +67,7 @@ public class MasterServer : IDisposable
 
     private async Task ProcessConnection(HttpListenerContext listenerContext)
     {
-        WebSocketContext? webSocketContext = null;
+        WebSocketContext? webSocketContext;
         try
         {
             Debug.WriteLine("Trying To Accept WebSocket");
@@ -57,55 +83,155 @@ public class MasterServer : IDisposable
             return;
         }
 
-        WebSocket webSocket = webSocketContext.WebSocket;
+        WebSocket clientSocket = webSocketContext.WebSocket;
 
-        ClientHandler client = new ClientHandler(webSocket, _count);
-        client.Closed += ClientOnClosed;
-        client.MessageReceived += ClientOnMessageReceived;
-        Task task = client.ListenAsync(CancellationToken.None);
+        Task task = ListClientAsync(_count, clientSocket);
 
-        lock (_clientsLock)
+        _clients[_count] = clientSocket;
+
+        SlaveConnected?.Invoke(_count);
+    }
+
+    private async Task ListClientAsync(int id, WebSocket clientSocket)
+    {
+        try
         {
-            _clients.Add(client);
-            Debug.WriteLine(_clients.Count);
+            byte[] buffer = new byte[1024];
+
+            while (clientSocket.State == WebSocketState.Open)
+            {
+                WebSocketReceiveResult result =
+                    await clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    await clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                    _clients.Remove(id, out _);
+                    if (_assignmentsInWork.TryRemove(clientSocket, out Assignment? ass))
+                    {
+                        _pendingAssignments.Enqueue(ass);
+                    }
+                }
+                else if (result.MessageType == WebSocketMessageType.Binary)
+                {
+                    byte[] data = buffer[..result.Count];
+                    ClientOnMessageReceived(clientSocket, data);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine(e.Message);
+            await clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "", CancellationToken.None);
+            _clients.Remove(id, out _);
+            if (_assignmentsInWork.TryRemove(clientSocket, out Assignment? ass))
+            {
+                _pendingAssignments.Enqueue(ass);
+            }
         }
     }
 
-    public void EnqueueJob(string text, string substring)
+    private void ClientOnMessageReceived(WebSocket socket, byte[] arg2)
+    {
+        AssignmentResponse? response = null;
+        try
+        {
+            response = MemoryPackSerializer.Deserialize<AssignmentResponse>(arg2);
+            if (response is null)
+            {
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine(e);
+        }
+
+        if (response is null)
+        {
+            Debug.WriteLine("COULDN't READ RESPONSE");
+            return;
+        }
+
+        Debug.WriteLine("{0} {1} {2} ", response.JobId, response.ChunkIndex, response.Count);
+
+        if (_jobs.TryGetValue(response.JobId, out Job? job))
+        {
+            _assignmentsInWork.Remove(socket, out _);
+            job.ReceivedResults.Add(response);
+            if (job.ReceivedResults.Count >= job.Total)
+            {
+                JobDone?.Invoke();
+                Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
+                _jobs.Remove(response.JobId, out _);
+                _state = ServerState.Accepting;
+                _stopwatch.Stop();
+                Debug.WriteLine(_stopwatch.Elapsed.Seconds);
+            }
+        }
+    }
+
+    public async Task SendJob(string text, string substring)
     {
         Guid jobId = Guid.NewGuid();
 
-        List<char[]> chunks = text.Chunk(text.Length).ToList();
+        List<char[]> chunks = text.Chunk(int.Min(1024, text.Length)).ToList();
+
         for (int i = 0; i < chunks.Count; i++)
         {
-            Assignment ass = new Assignment(jobId, i, chunks.Count, Encoding.UTF8.GetBytes("1klas"));
+            Assignment ass = new Assignment(jobId, i, chunks.Count, new string(chunks[i]), substring);
             _pendingAssignments.Enqueue(ass);
         }
 
-        _jobResults[jobId] = new Job(chunks.Count);
+        _jobs[jobId] = new Job(chunks.Count);
+
+        _stopwatch.Start();
+        _state = ServerState.Ignoring;
+
+        await SendingLoop();
     }
 
-    public async Task RunJobAssignment()
+    private async Task SendingLoop()
     {
-        List<Task> tasks = new List<Task>();
-        lock (_clientsLock)
+        while (!_pendingAssignments.IsEmpty && !_jobs.IsEmpty)
         {
-            foreach (ClientHandler client in _clients)
+            foreach (KeyValuePair<int, WebSocket> client in _clients)
             {
-                if (_pendingAssignments.Count == 0)
+                if (_assignmentsInWork.TryGetValue(client.Value, out _))
+                {
+                    continue;
+                }
+
+                if (_pendingAssignments.IsEmpty)
                 {
                     break;
                 }
 
                 if (_pendingAssignments.TryDequeue(out Assignment? ass))
                 {
-                    Task t = client.SendAssignment(ass);
-                    tasks.Add(t);
+                    _assignmentsInWork[client.Value] = ass;
+
+                    byte[] buffer = MemoryPackSerializer.Serialize(ass);
+                    int chunkSize = 1024;
+                    int offset = 0;
+
+                    while (offset < buffer.Length)
+                    {
+                        int size = Math.Min(chunkSize, buffer.Length - offset);
+                        var segment = new ArraySegment<byte>(buffer, offset, size);
+
+                        bool endOfMessage = (offset + size) >= buffer.Length;
+
+                        await client.Value.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
+                            CancellationToken.None);
+
+                        offset += size;
+                    }
                 }
             }
-        }
 
-        await Task.WhenAll(tasks);
+            await Task.Delay(50);
+        }
     }
 
     private class Job(int total)
@@ -114,64 +240,11 @@ public class MasterServer : IDisposable
         public List<AssignmentResponse> ReceivedResults { get; } = new List<AssignmentResponse>();
     }
 
-    private ConcurrentDictionary<Guid, Job> _jobResults =
-        new ConcurrentDictionary<Guid, Job>();
-
-    private void ClientOnMessageReceived(ClientHandler clientHandler, byte[] arg2)
-    {
-        AssignmentResponse? response = null;
-        try
-        {
-            response = JsonSerializer.Deserialize<AssignmentResponse>(arg2);
-            if (response is null)
-            {
-                return;
-            }
-        }
-        catch (JsonException e)
-        {
-            Debug.WriteLine(e);
-        }
-
-        if (response is null)
-        {
-            return;
-        }
-
-        Debug.WriteLine("{0} {1} {2} ", response.JobId, response.ChunkIndex, response.payload);
-
-        if (_jobResults.TryGetValue(response.JobId, out Job? job))
-        {
-            job.ReceivedResults.Add(response);
-            if (job.ReceivedResults.Count > job.Total)
-            {
-                //invoke job done
-                Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
-                _jobResults.Remove(response.JobId, out _);
-            }
-        }
-
-        clientHandler.LastAssignment = null;
-    }
-
-    private void ClientOnClosed(ClientHandler clientHandler)
-    {
-        if (clientHandler.LastAssignment is not null)
-        {
-            _pendingAssignments.Enqueue(clientHandler.LastAssignment);
-        }
-
-        lock (_clientsLock)
-        {
-            _clients.Remove(clientHandler);
-        }
-    }
-
     public void Dispose()
     {
-        foreach (ClientHandler client in _clients)
+        foreach (KeyValuePair<int, WebSocket> client in _clients)
         {
-            client.Dispose();
+            client.Value.Dispose();
         }
     }
 }

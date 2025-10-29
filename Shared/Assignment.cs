@@ -1,3 +1,6 @@
+using MemoryPack;
+
 namespace Shared;
 
-public record Assignment(Guid JobId, int ChunkId, int TotalChunks, byte[] Payload);
+[MemoryPackable]
+public partial record Assignment(Guid JobId, int ChunkId, int TotalChunks, string Text, string Substring);

@@ -1,29 +1,29 @@
-﻿using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+﻿using System.Windows;
+using Microsoft.Win32;
 
 namespace Master;
 
 public partial class MainWindow : Window
 {
-    private MainViewModel viewModel;
+    private MainViewModel _viewModel;
 
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainViewModel();
-        viewModel = new MainViewModel();
+        _viewModel = new MainViewModel();
+        DataContext = _viewModel;
     }
 
     private void ButtonBase_OnClick(object sender, RoutedEventArgs e)
     {
-        Task.Run(() => viewModel.SendJob());
+        OpenFileDialog fileDialog = new OpenFileDialog();
+        bool res = fileDialog.ShowDialog() ?? false;
+        if (!res)
+        {
+            return;
+        }
+
+        string file = fileDialog.FileName;
+        _viewModel.FileToOpen = file;
     }
 }

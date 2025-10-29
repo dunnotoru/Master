@@ -5,9 +5,32 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Master"
         mc:Ignorable="d"
-        d:DataContext="{x:Type local:MainViewModel}"
         Title="MainWindow" Height="450" Width="800">
+  <DockPanel>
+    <StackPanel DockPanel.Dock="Right">
+      <TextBlock Text="{Binding FileToOpen}"/>
+      <Button Click="ButtonBase_OnClick"
+              Margin="10"
+              Padding="5 2"
+              Content="ВЫБРАТЬ ТЕСТИК" />
+      <Label Content="НАЙТИ СЛОВЕЧКО"/>
+      <TextBox Text="{Binding Substring}"/>
+      <Button Command="{Binding SendJobCommand}"
+              Margin="10"
+              Padding="5 2"
+              Content="ОБКАШЛЯТЬ С КЛИЕНТИКАМИ" />
+    </StackPanel>
     <Grid>
-        <Button Click="ButtonBase_OnClick" Content="Start job" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <DockPanel HorizontalAlignment="Left" MinWidth="100">
+        <TextBlock DockPanel.Dock="Top" Margin="10">КЛИЕНТУРА</TextBlock>
+        <ListView ItemsSource="{Binding Clients}">
+          <ListView.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding StringFormat=КЛИЕНТУРА N.{0}}" />
+            </DataTemplate>
+          </ListView.ItemTemplate>
+        </ListView>
+      </DockPanel>
     </Grid>
+  </DockPanel>
 </Window>

@@ -1,3 +1,6 @@
+using MemoryPack;
+
 namespace Shared;
 
-public record AssignmentResponse(Guid JobId, int ChunkIndex, byte[] payload);
+[MemoryPackable]
+public partial record AssignmentResponse(Guid JobId, int ChunkIndex, int Count);
