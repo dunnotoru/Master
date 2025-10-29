@@ -2,19 +2,23 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
-using MemoryPack;
 using Shared;
 
 namespace Master;
 
 public class MasterServer : IDisposable
 {
+    private class Job(int total)
+    {
+        public int Total { get; } = total;
+        public List<AssignmentResponse> ReceivedResults { get; } = new List<AssignmentResponse>();
+    }
+
     private int _count = 0;
-    private ConcurrentDictionary<int, WebSocket> _clients = new ConcurrentDictionary<int, WebSocket>();
     private ConcurrentQueue<Assignment> _pendingAssignments = new ConcurrentQueue<Assignment>();
 
-    private ConcurrentDictionary<WebSocket, Assignment?> _assignmentsInWork =
-        new ConcurrentDictionary<WebSocket, Assignment?>();
+    private ConcurrentDictionary<ClientHandler, Assignment?> _clients =
+        new ConcurrentDictionary<ClientHandler, Assignment?>();
 
     private ConcurrentDictionary<Guid, Job> _jobs =
         new ConcurrentDictionary<Guid, Job>();
@@ -24,7 +28,6 @@ public class MasterServer : IDisposable
     public event Action? JobDone;
 
     private Stopwatch _stopwatch = new Stopwatch();
-
 
     private enum ServerState
     {
@@ -85,68 +88,33 @@ public class MasterServer : IDisposable
 
         WebSocket clientSocket = webSocketContext.WebSocket;
 
-        Task task = ListClientAsync(_count, clientSocket);
+        ClientHandler client = new ClientHandler(clientSocket, _count);
+        client.ConnectionClosed += ClientOnConnectionClosed;
+        client.MessageReceived += ClientOnMessageReceived;
 
-        _clients[_count] = clientSocket;
+        Task task = client.ListenAsync(CancellationToken.None);
+
+        _clients[client] = null;
 
         SlaveConnected?.Invoke(_count);
     }
 
-    private async Task ListClientAsync(int id, WebSocket clientSocket)
+    private void ClientOnConnectionClosed(ClientHandler obj)
     {
-        try
+        if (_clients.TryRemove(obj, out Assignment? ass))
         {
-            byte[] buffer = new byte[1024];
-
-            while (clientSocket.State == WebSocketState.Open)
-            {
-                WebSocketReceiveResult result =
-                    await clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
-                    _clients.Remove(id, out _);
-                    if (_assignmentsInWork.TryRemove(clientSocket, out Assignment? ass))
-                    {
-                        _pendingAssignments.Enqueue(ass);
-                    }
-                }
-                else if (result.MessageType == WebSocketMessageType.Binary)
-                {
-                    byte[] data = buffer[..result.Count];
-                    ClientOnMessageReceived(clientSocket, data);
-                }
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.WriteLine(e.Message);
-            await clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "", CancellationToken.None);
-            _clients.Remove(id, out _);
-            if (_assignmentsInWork.TryRemove(clientSocket, out Assignment? ass))
+            obj.ConnectionClosed -= ClientOnConnectionClosed;
+            obj.MessageReceived -= ClientOnMessageReceived;
+            SlaveDisconnected?.Invoke(obj.Id);
+            if (ass is not null)
             {
                 _pendingAssignments.Enqueue(ass);
             }
         }
     }
 
-    private void ClientOnMessageReceived(WebSocket socket, byte[] arg2)
+    private void ClientOnMessageReceived(ClientHandler clientHandler, AssignmentResponse? response)
     {
-        AssignmentResponse? response = null;
-        try
-        {
-            response = MemoryPackSerializer.Deserialize<AssignmentResponse>(arg2);
-            if (response is null)
-            {
-                return;
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.WriteLine(e);
-        }
-
         if (response is null)
         {
             Debug.WriteLine("COULDN't READ RESPONSE");
@@ -157,7 +125,8 @@ public class MasterServer : IDisposable
 
         if (_jobs.TryGetValue(response.JobId, out Job? job))
         {
-            _assignmentsInWork.Remove(socket, out _);
+            _clients[clientHandler] = null;
+
             job.ReceivedResults.Add(response);
             if (job.ReceivedResults.Count >= job.Total)
             {
@@ -195,13 +164,8 @@ public class MasterServer : IDisposable
     {
         while (!_pendingAssignments.IsEmpty && !_jobs.IsEmpty)
         {
-            foreach (KeyValuePair<int, WebSocket> client in _clients)
+            foreach (KeyValuePair<ClientHandler, Assignment?> client in _clients.Where(c => c.Value is null))
             {
-                if (_assignmentsInWork.TryGetValue(client.Value, out _))
-                {
-                    continue;
-                }
-
                 if (_pendingAssignments.IsEmpty)
                 {
                     break;
@@ -209,24 +173,9 @@ public class MasterServer : IDisposable
 
                 if (_pendingAssignments.TryDequeue(out Assignment? ass))
                 {
-                    _assignmentsInWork[client.Value] = ass;
+                    _clients[client.Key] = ass;
 
-                    byte[] buffer = MemoryPackSerializer.Serialize(ass);
-                    int chunkSize = 1024;
-                    int offset = 0;
-
-                    while (offset < buffer.Length)
-                    {
-                        int size = Math.Min(chunkSize, buffer.Length - offset);
-                        var segment = new ArraySegment<byte>(buffer, offset, size);
-
-                        bool endOfMessage = (offset + size) >= buffer.Length;
-
-                        await client.Value.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
-                            CancellationToken.None);
-
-                        offset += size;
-                    }
+                    await client.Key.SendAssignment(ass);
                 }
             }
 
@@ -234,17 +183,11 @@ public class MasterServer : IDisposable
         }
     }
 
-    private class Job(int total)
-    {
-        public int Total { get; } = total;
-        public List<AssignmentResponse> ReceivedResults { get; } = new List<AssignmentResponse>();
-    }
-
     public void Dispose()
     {
-        foreach (KeyValuePair<int, WebSocket> client in _clients)
+        foreach (KeyValuePair<ClientHandler, Assignment?> client in _clients)
         {
-            client.Value.Dispose();
+            client.Key.Dispose();
         }
     }
 }

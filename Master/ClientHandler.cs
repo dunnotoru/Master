@@ -3,32 +3,43 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using MemoryPack;
 using Shared;
 
 namespace Master;
 
 class ClientHandler : IDisposable
 {
-    public WebSocket Socket { get; }
+    private WebSocket ClientSocket { get; }
     public int Id { get; }
 
-    public event Action<ClientHandler, byte[]>? MessageReceived;
-    public event Action<ClientHandler>? Closed;
+    public event Action<ClientHandler, AssignmentResponse?>? MessageReceived;
+    public event Action<ClientHandler>? ConnectionClosed;
 
-    public Assignment? LastAssignment { get; set; }
-
-    public ClientHandler(WebSocket socket, int id)
+    public ClientHandler(WebSocket clientSocket, int id)
     {
-        Socket = socket;
+        ClientSocket = clientSocket;
         Id = id;
     }
 
     public async Task SendAssignment(Assignment assignment)
     {
-        LastAssignment = assignment;
-        byte[] buffer = JsonSerializer.SerializeToUtf8Bytes(assignment);
-        await Socket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Binary, true,
-            CancellationToken.None);
+        byte[] buffer = MemoryPackSerializer.Serialize(assignment);
+        int chunkSize = 1024;
+        int offset = 0;
+
+        while (offset < buffer.Length)
+        {
+            int size = Math.Min(chunkSize, buffer.Length - offset);
+            ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
+
+            bool endOfMessage = (offset + size) >= buffer.Length;
+
+            await ClientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
+                CancellationToken.None);
+
+            offset += size;
+        }
     }
 
     public async Task ListenAsync(CancellationToken cancellation)
@@ -37,40 +48,45 @@ class ClientHandler : IDisposable
         {
             byte[] buffer = new byte[1024];
 
-            while (!cancellation.IsCancellationRequested && Socket.State == WebSocketState.Open)
+            while (ClientSocket.State == WebSocketState.Open)
             {
                 WebSocketReceiveResult result =
-                    await Socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    await Socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
-                    Closed?.Invoke(this);
+                    await ClientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                    ConnectionClosed?.Invoke(this);
                 }
                 else if (result.MessageType == WebSocketMessageType.Binary)
                 {
-                    byte[] data = buffer[..result.Count];
-                    MessageReceived?.Invoke(this, data);
+                    List<byte> receivedBytes = new List<byte>();
+
+                    while (!result.EndOfMessage)
+                    {
+                        result = await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer),
+                            CancellationToken.None);
+                    }
+
+                    receivedBytes.AddRange(buffer.Take(result.Count));
+                    byte[] fullMessage = receivedBytes.ToArray();
+
+                    AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(fullMessage);
+
+                    MessageReceived?.Invoke(this, response);
                 }
             }
-        }
-        catch (OperationCanceledException e)
-        {
-            Debug.WriteLine(e.Message);
-            await Socket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Timeout Exception",
-                CancellationToken.None);
-            Closed?.Invoke(this);
         }
         catch (Exception e)
         {
             Debug.WriteLine(e.Message);
-            await Socket.CloseAsync(WebSocketCloseStatus.InternalServerError, "", CancellationToken.None);
-            Closed?.Invoke(this);
+            await ClientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "", CancellationToken.None);
+            ConnectionClosed?.Invoke(this);
         }
     }
 
     public void Dispose()
     {
-        Socket.Dispose();
+        ClientSocket.Dispose();
     }
 }

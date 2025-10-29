@@ -4,16 +4,16 @@ using Shared;
 
 namespace Slave;
 
-class Program
+internal static class Program
 {
-    static void Main(string[] args)
+    private static void Main(string[] args)
     {
         Connect(new Uri("ws://localhost:5000/master"));
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
     }
 
-    public static async Task Connect(Uri uri)
+    private static async Task Connect(Uri uri)
     {
         ClientWebSocket? socket = null;
         try
@@ -21,6 +21,7 @@ class Program
             Console.WriteLine("Trying To Connect");
             socket = new ClientWebSocket();
             await socket.ConnectAsync(uri, CancellationToken.None);
+            Console.WriteLine("Success");
             await ListenForAssignments(socket);
         }
         catch (Exception e)
@@ -34,7 +35,7 @@ class Program
         }
     }
 
-    public static async Task ListenForAssignments(ClientWebSocket socket)
+    private static async Task ListenForAssignments(ClientWebSocket socket)
     {
         while (socket.State == WebSocketState.Open)
         {
@@ -49,7 +50,7 @@ class Program
             } while (!result.EndOfMessage);
 
             byte[] fullMessage = receivedBytes.ToArray();
-            
+
             if (result.MessageType == WebSocketMessageType.Close)
             {
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
@@ -65,9 +66,23 @@ class Program
 
                 Console.WriteLine("Handle Response");
 
-                byte[] arr = MemoryPackSerializer.Serialize(response);
-                await socket.SendAsync(new ArraySegment<byte>(arr), WebSocketMessageType.Binary,
-                    false, CancellationToken.None);
+                int chunkSize = 1024;
+                int offset = 0;
+
+                buffer = MemoryPackSerializer.Serialize(response);
+                
+                while (offset < buffer.Length)
+                {
+                    int size = Math.Min(chunkSize, buffer.Length - offset);
+                    ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
+
+                    bool endOfMessage = (offset + size) >= buffer.Length;
+
+                    await socket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
+                        CancellationToken.None);
+
+                    offset += size;
+                }
             }
         }
     }
