@@ -48,10 +48,10 @@ class ClientHandler : IDisposable
         {
             byte[] buffer = new byte[1024];
 
-            while (ClientSocket.State == WebSocketState.Open)
+            while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
             {
                 WebSocketReceiveResult result =
-                    await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -62,10 +62,12 @@ class ClientHandler : IDisposable
                 {
                     List<byte> receivedBytes = new List<byte>();
 
+                    CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    
                     while (!result.EndOfMessage)
                     {
                         result = await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer),
-                            CancellationToken.None);
+                            cts.Token);
                     }
 
                     receivedBytes.AddRange(buffer.Take(result.Count));

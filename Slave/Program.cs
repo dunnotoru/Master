@@ -64,7 +64,7 @@ internal static class Program
 
                 AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);
 
-                Console.WriteLine("Handle Response");
+                Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkIndex);
 
                 int chunkSize = 1024;
                 int offset = 0;
