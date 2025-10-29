@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
+using System.Threading.Channels;
 using Shared;
 
 namespace Master;
@@ -12,30 +13,21 @@ public class MasterServer : IDisposable
     {
         public int Total { get; } = total;
         public List<AssignmentResponse> ReceivedResults { get; } = new List<AssignmentResponse>();
+        public Stopwatch Timer { get; } = new Stopwatch();
     }
 
     private int _count = 0;
-    private ConcurrentQueue<Assignment> _pendingAssignments = new ConcurrentQueue<Assignment>();
+    private readonly Channel<Assignment> _assQueue = Channel.CreateUnbounded<Assignment>();
 
-    private ConcurrentDictionary<ClientHandler, Assignment?> _clients =
+    private readonly ConcurrentDictionary<ClientHandler, Assignment?> _clients =
         new ConcurrentDictionary<ClientHandler, Assignment?>();
 
-    private ConcurrentDictionary<Guid, Job> _jobs =
+    private readonly ConcurrentDictionary<Guid, Job> _jobs =
         new ConcurrentDictionary<Guid, Job>();
 
     public event Action<int>? SlaveConnected;
     public event Action<int>? SlaveDisconnected;
     public event Action? JobDone;
-
-    private Stopwatch _stopwatch = new Stopwatch();
-
-    private enum ServerState
-    {
-        Accepting = 0,
-        Ignoring
-    }
-
-    private ServerState _state;
 
     public async Task Start(string listenerPrefix, CancellationToken cancellationToken)
     {
@@ -43,16 +35,12 @@ public class MasterServer : IDisposable
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
+
+        Task.Run(() => JobSchedulingLoop(cancellationToken), cancellationToken);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             HttpListenerContext listenerContext = await listener.GetContextAsync();
-
-            if (_state == ServerState.Ignoring)
-            {
-                listenerContext.Response.StatusCode = 404;
-                listenerContext.Response.Close();
-                continue;
-            }
 
             if (listenerContext.Request.IsWebSocketRequest)
             {
@@ -92,7 +80,7 @@ public class MasterServer : IDisposable
         client.ConnectionClosed += ClientOnConnectionClosed;
         client.MessageReceived += ClientOnMessageReceived;
 
-        Task task = client.ListenAsync(CancellationToken.None);
+        _ = client.ListenAsync(CancellationToken.None);
 
         _clients[client] = null;
 
@@ -108,7 +96,7 @@ public class MasterServer : IDisposable
             SlaveDisconnected?.Invoke(obj.Id);
             if (ass is not null)
             {
-                _pendingAssignments.Enqueue(ass);
+                _assQueue.Writer.TryWrite(ass);
             }
         }
     }
@@ -133,9 +121,8 @@ public class MasterServer : IDisposable
                 JobDone?.Invoke();
                 Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
                 _jobs.Remove(response.JobId, out _);
-                _state = ServerState.Accepting;
-                _stopwatch.Stop();
-                Debug.WriteLine(_stopwatch.Elapsed.Seconds);
+                job.Timer.Stop();
+                Debug.WriteLine(job.Timer.Elapsed.Seconds);
             }
         }
     }
@@ -149,37 +136,30 @@ public class MasterServer : IDisposable
         for (int i = 0; i < chunks.Count; i++)
         {
             Assignment ass = new Assignment(jobId, i, chunks.Count, new string(chunks[i]), substring);
-            _pendingAssignments.Enqueue(ass);
+            await _assQueue.Writer.WriteAsync(ass);
         }
 
-        _jobs[jobId] = new Job(chunks.Count);
-
-        _stopwatch.Start();
-        _state = ServerState.Ignoring;
-
-        await SendingLoop();
+        Job job = new Job(chunks.Count);
+        job.Timer.Start();
+        _jobs[jobId] = job;
     }
 
-    private async Task SendingLoop()
+    private async Task JobSchedulingLoop(CancellationToken cancellation)
     {
-        while (!_pendingAssignments.IsEmpty && !_jobs.IsEmpty)
+        while (await _assQueue.Reader.WaitToReadAsync(cancellation))
         {
             foreach (KeyValuePair<ClientHandler, Assignment?> client in _clients.Where(c => c.Value is null))
             {
-                if (_pendingAssignments.IsEmpty)
+                if (_assQueue.Reader.TryRead(out Assignment? ass))
+                {
+                    _clients[client.Key] = ass;
+                    await client.Key.SendAssignment(ass);
+                }
+                else
                 {
                     break;
                 }
-
-                if (_pendingAssignments.TryDequeue(out Assignment? ass))
-                {
-                    _clients[client.Key] = ass;
-
-                    await client.Key.SendAssignment(ass);
-                }
             }
-
-            await Task.Delay(50);
         }
     }
 
