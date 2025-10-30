@@ -67,13 +67,13 @@ internal static class Program
             Assignment? ass = MemoryPackSerializer.Deserialize<Assignment>(ms.ToArray());
 
             // //TODO: ARTIFICIAL DELAY DAMMNNN
-            // await Task.Delay(TimeSpan.FromSeconds(1)); 
+            // await Task.Delay(TimeSpan.FromMilliseconds(500)); 
 
             int count = FindSubstrings(ass.Text, ass.Substring);
 
             AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);
 
-            Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkIndex);
+            Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkId);
 
             byte[] data = MemoryPackSerializer.Serialize(response);
 

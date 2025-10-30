@@ -9,33 +9,35 @@ namespace Master;
 
 class ClientHandler : IDisposable
 {
-    private readonly ChannelReader<Assignment> _asses;
+    private readonly Channel<Assignment> _asses;
+    private readonly ChannelWriter<AssignmentResponse> _results;
     private WebSocket ClientSocket { get; }
     public int Id { get; }
 
     public const int ChunkSize = 1024 * 64; //64 KB
     public const int BufferSize = 1024 * 64;
 
-    public event Action<ClientHandler, AssignmentResponse?>? MessageReceived;
     public event Action<ClientHandler>? ConnectionClosed;
 
-    public Assignment? AssInWork { get; private set; }
-
-    public ClientHandler(WebSocket clientSocket, int id, ChannelReader<Assignment> asses)
+    public ClientHandler(WebSocket clientSocket, int id, Channel<Assignment> asses,
+        ChannelWriter<AssignmentResponse> results)
     {
         _asses = asses;
+        _results = results;
         ClientSocket = clientSocket;
         Id = id;
     }
 
-    public void SetAssignmentComplete()
-    {
-        AssInWork = null;
-        signal.Release();
-    }
+    private Assignment? _lastAssignment;
+    private TaskCompletionSource<AssignmentResponse>? _pendingResponse;
 
-    public async Task SendAssignment(Assignment assignment)
+    private async Task<AssignmentResponse> SendAssignmentAsync(Assignment assignment)
     {
+        _lastAssignment = assignment;
+        _pendingResponse = new TaskCompletionSource<AssignmentResponse>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
         byte[] data = MemoryPackSerializer.Serialize(assignment);
 
         int offset = 0;
@@ -51,23 +53,18 @@ class ClientHandler : IDisposable
             offset += size;
         }
 
-        AssInWork = assignment;
+        return await _pendingResponse.Task;
     }
 
-    private SemaphoreSlim signal = new SemaphoreSlim(0, 1);
-
-    private async Task WorkLoop(CancellationToken cancellation)
+    private async Task ScheduleLoop(CancellationToken cancellation)
     {
-        while (await _asses.WaitToReadAsync(cancellation))
+        while (await _asses.Reader.WaitToReadAsync(cancellation))
         {
-            Debug.WriteLine("CLIENT {0} IS WAITING FOR WORK", [Id]);
-            if (AssInWork is null)
-            {
-                Debug.WriteLine("SENDING ASS");
-                Assignment ass = await _asses.ReadAsync(cancellation);
-                await SendAssignment(ass);
-                await signal.WaitAsync(cancellation);
-            }
+            Debug.WriteLine("CLIENT {0} IS READY", [Id]);
+            Debug.WriteLine("SENDING ASS");
+            Assignment ass = await _asses.Reader.ReadAsync(cancellation);
+            AssignmentResponse result = await SendAssignmentAsync(ass);
+            await _results.WriteAsync(result, cancellation);
         }
     }
 
@@ -75,13 +72,12 @@ class ClientHandler : IDisposable
     {
         try
         {
-            Task.Run(() => WorkLoop(cancellation), cancellation);
+            _ = ScheduleLoop(cancellation);
 
             byte[] buffer = new byte[BufferSize];
+            using MemoryStream ms = new MemoryStream();
             while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
             {
-                using MemoryStream ms = new MemoryStream();
-
                 WebSocketReceiveResult result;
                 do
                 {
@@ -93,6 +89,12 @@ class ClientHandler : IDisposable
                         await ClientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
                         Debug.WriteLine("Closed Normal Closure");
                         ConnectionClosed?.Invoke(this);
+                        if (_lastAssignment is not null)
+                        {
+                            _pendingResponse?.TrySetCanceled(cancellation);
+                            await _asses.Writer.WriteAsync(_lastAssignment, cancellation);
+                        }
+
                         return;
                     }
 
@@ -100,14 +102,29 @@ class ClientHandler : IDisposable
                 } while (!result.EndOfMessage);
 
                 AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(ms.ToArray());
-
-                MessageReceived?.Invoke(this, response);
+                ms.SetLength(0);
+                
+                if (response is not null
+                    && _lastAssignment is not null
+                    && response.JobId == _lastAssignment.JobId
+                    && response.ChunkId == _lastAssignment.ChunkId)
+                {
+                    _pendingResponse?.TrySetResult(response);
+                }
             }
         }
         catch (Exception e)
         {
             Debug.WriteLine(e.Message);
-            await ClientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "", CancellationToken.None);
+            await ClientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
+                CancellationToken.None);
+
+            if (_lastAssignment is not null)
+            {
+                await _asses.Writer.WriteAsync(_lastAssignment, cancellation);
+            }
+
+            _pendingResponse?.TrySetCanceled(CancellationToken.None);
             ConnectionClosed?.Invoke(this);
         }
     }

@@ -12,6 +12,7 @@ public enum ClientMessageType
 [MemoryPackable]
 public partial class ClientMessage
 {
+    public Guid id;
     public ClientMessageType type;
     public byte[] payload;
 }

@@ -7,10 +7,11 @@ using Shared;
 
 namespace Master;
 
-public class MasterServer : IDisposable
+public sealed class MasterServer : IDisposable
 {
     private int _count = 0;
     private readonly Channel<Assignment> _asses = Channel.CreateUnbounded<Assignment>();
+    private readonly Channel<AssignmentResponse> _results = Channel.CreateUnbounded<AssignmentResponse>();
 
     private readonly ConcurrentDictionary<ClientHandler, int> _clients =
         new ConcurrentDictionary<ClientHandler, int>();
@@ -28,7 +29,10 @@ public class MasterServer : IDisposable
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
-        await ListenConnectionsLoop(listener, cancellation);
+        Task result = ResultAssemblingLoop(cancellation);
+        Task listen = ListenConnectionsLoop(listener, cancellation);
+
+        await Task.WhenAll(result, listen);
     }
 
     private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
@@ -71,9 +75,8 @@ public class MasterServer : IDisposable
 
         WebSocket clientSocket = webSocketContext.WebSocket;
 
-        ClientHandler client = new ClientHandler(clientSocket, _count, _asses);
+        ClientHandler client = new ClientHandler(clientSocket, _count, _asses, _results.Writer);
         client.ConnectionClosed += ClientOnConnectionClosed;
-        client.MessageReceived += ClientOnMessageReceived;
 
         _ = client.ListenAsync(CancellationToken.None);
 
@@ -82,58 +85,47 @@ public class MasterServer : IDisposable
         SlaveConnected?.Invoke(_count);
     }
 
+    private async Task ResultAssemblingLoop(CancellationToken cancellation)
+    {
+        while (await _results.Reader.WaitToReadAsync(cancellation))
+        {
+            AssignmentResponse response = await _results.Reader.ReadAsync(cancellation);
+            Debug.WriteLine("RESPONSE RECEIVED: {0} {1} {2} ", response.JobId, response.ChunkId, response.Count);
+
+            if (_jobs.TryGetValue(response.JobId, out Job? job))
+            {
+                job.ReceivedResults.Add(response);
+                if (job.ReceivedResults.Count >= job.Total)
+                {
+                    Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
+                    _jobs.Remove(response.JobId, out _);
+                    job.Timer.Stop();
+                    JobDone?.Invoke(new JobResult(response.JobId, job.Timer.Elapsed,
+                        job.ReceivedResults.Sum(x => x.Count)));
+                    Debug.WriteLine(job.Timer.Elapsed.Seconds);
+                }
+            }
+
+            Debug.WriteLine("JOBS REMAINING {0}", [string.Join(' ', _jobs.Keys)]);
+        }
+    }
+
     private void ClientOnConnectionClosed(ClientHandler obj)
     {
         if (_clients.TryRemove(obj, out _))
         {
             obj.ConnectionClosed -= ClientOnConnectionClosed;
-            obj.MessageReceived -= ClientOnMessageReceived;
-
-            if (obj.AssInWork is not null)
-            {
-                _asses.Writer.TryWrite(obj.AssInWork);
-            }
 
             SlaveDisconnected?.Invoke(obj.Id);
         }
     }
 
-    private void ClientOnMessageReceived(ClientHandler client, AssignmentResponse? response)
-    {
-        if (response is null)
-        {
-            Debug.WriteLine("COULDN't READ RESPONSE");
-            return;
-        }
-        
-        Debug.WriteLine("RESPONSE RECEIVED {0}", [response]);
-        
-        Debug.WriteLine("{0} {1} {2} ", response.JobId, response.ChunkIndex, response.Count);
-
-        if (_jobs.TryGetValue(response.JobId, out Job? job))
-        {
-            client.SetAssignmentComplete();
-            job.ReceivedResults.Add(response);
-            if (job.ReceivedResults.Count >= job.Total)
-            {
-                Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
-                _jobs.Remove(response.JobId, out _);
-                job.Timer.Stop();
-                JobDone?.Invoke(new JobResult(response.JobId, job.Timer.Elapsed,
-                    job.ReceivedResults.Sum(x => x.Count)));
-                Debug.WriteLine(job.Timer.Elapsed.Seconds);
-            }
-        }
-
-        Debug.WriteLine("JOBS REMAINING {0}", [string.Join(' ', _jobs.Keys)]);
-    }
-
-    public async Task SendJob(string text, string substring)
+    public async Task AddJob(string text, string substring)
     {
         Guid jobId = Guid.NewGuid();
 
         List<char[]> chunks = text.Chunk(int.Min(1024 * 64, text.Length)).ToList();
-        
+
         Job job = new Job(chunks.Count);
         job.Timer.Start();
         _jobs[jobId] = job;

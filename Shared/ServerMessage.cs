@@ -11,6 +11,8 @@ public enum ServerMessageType
 [MemoryPackable]
 public partial class ServerMessage
 {
+    public Guid id;
+    public Guid requestId;
     public ServerMessageType type;
     public byte[] payload;
 }
