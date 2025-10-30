@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -12,8 +13,9 @@ class ClientHandler : IDisposable
 {
     private WebSocket ClientSocket { get; }
     public int Id { get; }
-    
+
     public const int ChunkSize = 1024 * 64; //64 KB
+    public const int BufferSize = 1024 * 64;
 
     public event Action<ClientHandler, AssignmentResponse?>? MessageReceived;
     public event Action<ClientHandler>? ConnectionClosed;
@@ -26,18 +28,17 @@ class ClientHandler : IDisposable
 
     public async Task SendAssignment(Assignment assignment)
     {
-        byte[] buffer = MemoryPackSerializer.Serialize(assignment);
+        byte[] data = MemoryPackSerializer.Serialize(assignment);
+
         int offset = 0;
 
-        while (offset < buffer.Length)
+        while (offset < data.Length)
         {
-            int size = Math.Min(ChunkSize, buffer.Length - offset);
-            ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
+            int size = Math.Min(ChunkSize, data.Length - offset);
+            bool endOfMessage = offset + size >= data.Length;
 
-            bool endOfMessage = (offset + size) >= buffer.Length;
-
-            await ClientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
-                CancellationToken.None);
+            ArraySegment<byte> segment = new ArraySegment<byte>(data, offset, size);
+            await ClientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
 
             offset += size;
         }
@@ -47,37 +48,31 @@ class ClientHandler : IDisposable
     {
         try
         {
-            byte[] buffer = new byte[1024];
-
             while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
             {
-                WebSocketReceiveResult result =
-                    await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
+                byte[] buffer = new byte[BufferSize];
+                using MemoryStream ms = new MemoryStream();
 
-                if (result.MessageType == WebSocketMessageType.Close)
+                WebSocketReceiveResult result;
+                do
                 {
-                    await ClientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
-                    ConnectionClosed?.Invoke(this);
-                }
-                else if (result.MessageType == WebSocketMessageType.Binary)
-                {
-                    List<byte> receivedBytes = new List<byte>();
+                    result =
+                        await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
 
-                    CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    
-                    while (!result.EndOfMessage)
+                    if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        result = await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer),
-                            cts.Token);
+                        await ClientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                        Debug.WriteLine("Closed Normal Closure");
+                        ConnectionClosed?.Invoke(this);
+                        return;
                     }
 
-                    receivedBytes.AddRange(buffer.Take(result.Count));
-                    byte[] fullMessage = receivedBytes.ToArray();
+                    ms.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
 
-                    AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(fullMessage);
-
-                    MessageReceived?.Invoke(this, response);
-                }
+                AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(ms.ToArray());
+                
+                MessageReceived?.Invoke(this, response);
             }
         }
         catch (Exception e)

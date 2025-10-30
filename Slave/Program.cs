@@ -6,21 +6,27 @@ namespace Slave;
 
 internal static class Program
 {
+    private const int ChunkSize = 1024 * 64;
+    private const int BufferSize = 1024 * 64;
+    
+    
     private static void Main(string[] args)
     {
-        Connect(new Uri("ws://localhost:5000/master"));
+        CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Connect(new Uri("ws://localhost:5000/master"), cts.Token);
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
     }
 
-    private static async Task Connect(Uri uri)
+    private static async Task Connect(Uri uri, CancellationToken cancellation)
     {
         ClientWebSocket? socket = null;
+
         try
         {
             Console.WriteLine("Trying To Connect");
             socket = new ClientWebSocket();
-            await socket.ConnectAsync(uri, CancellationToken.None);
+            await socket.ConnectAsync(uri, cancellation);
             Console.WriteLine("Success");
             await ListenForAssignments(socket);
         }
@@ -39,54 +45,57 @@ internal static class Program
     {
         while (socket.State == WebSocketState.Open)
         {
-            List<byte> receivedBytes = new List<byte>();
-            byte[] buffer = new byte[1024];
-            WebSocketReceiveResult result;
+            byte[] buffer = new byte[BufferSize];
+            using MemoryStream ms = new MemoryStream();
 
+            WebSocketReceiveResult result;
             do
             {
-                result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                receivedBytes.AddRange(buffer.Take(result.Count));
+                result =
+                    await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                    Console.WriteLine("Closed Normal Closure");
+                    return;
+                }
+
+                ms.Write(buffer, 0, result.Count);
             } while (!result.EndOfMessage);
 
-            byte[] fullMessage = receivedBytes.ToArray();
+            Assignment? ass = MemoryPackSerializer.Deserialize<Assignment>(ms.ToArray());
+            
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            
+            int count = FindSubstrings(ass.Text, ass.Substring);
 
-            if (result.MessageType == WebSocketMessageType.Close)
+            AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);
+
+            Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkIndex);
+
+            buffer = MemoryPackSerializer.Serialize(response);
+
+            await socket.SendAsync(buffer, WebSocketMessageType.Binary, false,
+                CancellationToken.None);
+            
+            byte[] data = MemoryPackSerializer.Serialize(response);
+
+            int offset = 0;
+
+            while (offset < buffer.Length)
             {
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None);
-            }
-            else
-            {
-                Assignment? ass = MemoryPackSerializer.Deserialize<Assignment>(fullMessage);
-                //handle errors
+                int size = Math.Min(ChunkSize, buffer.Length - offset);
+                bool endOfMessage = (offset + size) >= buffer.Length;
 
-                await Task.Delay(TimeSpan.FromSeconds(1));
-                int count = FindSubstrings(ass.Text, ass.Substring);
+                ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
+                await socket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
 
-                AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);
-
-                Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkIndex);
-
-                int chunkSize = 1024;
-                int offset = 0;
-
-                buffer = MemoryPackSerializer.Serialize(response);
-                
-                while (offset < buffer.Length)
-                {
-                    int size = Math.Min(chunkSize, buffer.Length - offset);
-                    ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
-
-                    bool endOfMessage = (offset + size) >= buffer.Length;
-
-                    await socket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage,
-                        CancellationToken.None);
-
-                    offset += size;
-                }
+                offset += size;
             }
         }
     }
+
 
     private static int FindSubstrings(string text, string substring)
     {

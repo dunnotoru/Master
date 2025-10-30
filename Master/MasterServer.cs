@@ -34,7 +34,7 @@ public class MasterServer : IDisposable
         await Task.WhenAll(schedule, listen);
     }
 
-    private async Task  ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
+    private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
     {
         while (!cancellation.IsCancellationRequested)
         {
@@ -135,7 +135,7 @@ public class MasterServer : IDisposable
         Guid jobId = Guid.NewGuid();
 
         //TODO: int.Min(1024, text.Length) NOT 1 
-        List<char[]> chunks = text.Chunk(1).ToList();
+        List<char[]> chunks = text.Chunk(int.Min(1024 * 64, text.Length)).ToList();
 
         for (int i = 0; i < chunks.Count; i++)
         {
