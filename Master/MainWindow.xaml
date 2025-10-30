@@ -5,22 +5,28 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Master"
         mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance local:MainViewModel}"
         Title="MainWindow" Height="450" Width="800">
   <DockPanel>
     <StackPanel DockPanel.Dock="Right">
-      <TextBlock Text="{Binding FileToOpen}"/>
+      <TextBlock Text="{Binding FileToOpen}" />
       <Button Click="ButtonBase_OnClick"
               Margin="10"
               Padding="5 2"
-              Content="ВЫБРАТЬ ТЕСТИК" />
-      <Label Content="НАЙТИ СЛОВЕЧКО"/>
-      <TextBox Text="{Binding Substring}"/>
+              Content="ВЫБРАТЬ ТЕКСТИК" />
+      <Label Content="НАЙТИ СЛОВЕЧКО" />
+      <TextBox Text="{Binding Substring}" />
       <Button Command="{Binding SendJobCommand}"
               Margin="10"
               Padding="5 2"
               Content="ОБКАШЛЯТЬ С КЛИЕНТИКАМИ" />
+      <Button Command="{Binding }"
+              Margin="10"
+              Padding="5 2 "
+              Content="ПОРЕШАТЬ ВОПРОСИК САМОМУ"
+        />
     </StackPanel>
-    <Grid>
+    <Grid DockPanel.Dock="Left">
       <DockPanel HorizontalAlignment="Left" MinWidth="100">
         <TextBlock DockPanel.Dock="Top" Margin="10">КЛИЕНТУРА</TextBlock>
         <ListView ItemsSource="{Binding Clients}">
@@ -32,5 +38,20 @@
         </ListView>
       </DockPanel>
     </Grid>
+    <DockPanel>
+      <TextBlock DockPanel.Dock="Top" HorizontalAlignment="Center">РЕЗУЛЬТАТЫ ЕПТА</TextBlock>
+      <ListView ItemsSource="{Binding Results}" BorderBrush="Black" Margin="10" BorderThickness="5">
+        <ListView.ItemTemplate>
+          <DataTemplate>
+            <Border BorderBrush="Red" BorderThickness="3">
+              <StackPanel>
+                <TextBlock Text="{Binding JobId}" />
+                <TextBlock Text="{Binding ElapsedTime}" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ListView.ItemTemplate>
+      </ListView>
+    </DockPanel>
   </DockPanel>
 </Window>

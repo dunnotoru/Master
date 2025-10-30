@@ -9,13 +9,6 @@ namespace Master;
 
 public class MasterServer : IDisposable
 {
-    private class Job(int total)
-    {
-        public int Total { get; } = total;
-        public List<AssignmentResponse> ReceivedResults { get; } = new List<AssignmentResponse>();
-        public Stopwatch Timer { get; } = new Stopwatch();
-    }
-
     private int _count = 0;
     private readonly Channel<Assignment> _assQueue = Channel.CreateUnbounded<Assignment>();
 
@@ -27,18 +20,23 @@ public class MasterServer : IDisposable
 
     public event Action<int>? SlaveConnected;
     public event Action<int>? SlaveDisconnected;
-    public event Action? JobDone;
+    public event Action<JobResult>? JobDone;
 
-    public async Task Start(string listenerPrefix, CancellationToken cancellationToken)
+    public async Task Start(string listenerPrefix, CancellationToken cancellation)
     {
         HttpListener listener = new HttpListener();
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
+        Task schedule = Task.Run(() => JobSchedulingLoop(cancellation), cancellation);
+        Task listen = Task.Run(() => ListenConnectionsLoop(listener, cancellation), cancellation);
 
-        Task.Run(() => JobSchedulingLoop(cancellationToken), cancellationToken);
+        await Task.WhenAll(schedule, listen);
+    }
 
-        while (!cancellationToken.IsCancellationRequested)
+    private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
+    {
+        while (!cancellation.IsCancellationRequested)
         {
             HttpListenerContext listenerContext = await listener.GetContextAsync();
 
@@ -93,11 +91,13 @@ public class MasterServer : IDisposable
         {
             obj.ConnectionClosed -= ClientOnConnectionClosed;
             obj.MessageReceived -= ClientOnMessageReceived;
-            SlaveDisconnected?.Invoke(obj.Id);
+
             if (ass is not null)
             {
                 _assQueue.Writer.TryWrite(ass);
             }
+
+            SlaveDisconnected?.Invoke(obj.Id);
         }
     }
 
@@ -118,20 +118,24 @@ public class MasterServer : IDisposable
             job.ReceivedResults.Add(response);
             if (job.ReceivedResults.Count >= job.Total)
             {
-                JobDone?.Invoke();
                 Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
                 _jobs.Remove(response.JobId, out _);
                 job.Timer.Stop();
+                JobDone?.Invoke(new JobResult(response.JobId, job.Timer.Elapsed,
+                    job.ReceivedResults.Sum(x => x.Count)));
                 Debug.WriteLine(job.Timer.Elapsed.Seconds);
             }
         }
+
+        Debug.WriteLine("JOBS REMAINING {0}", [string.Join(' ', _jobs.Keys)]);
     }
 
     public async Task SendJob(string text, string substring)
     {
         Guid jobId = Guid.NewGuid();
 
-        List<char[]> chunks = text.Chunk(int.Min(1024, text.Length)).ToList();
+        //TODO: int.Min(1024, text.Length) NOT 1 
+        List<char[]> chunks = text.Chunk(1).ToList();
 
         for (int i = 0; i < chunks.Count; i++)
         {

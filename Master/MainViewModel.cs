@@ -11,10 +11,16 @@ public partial class MainViewModel : ObservableObject
     private readonly MasterServer _server;
     private readonly SynchronizationContext? _uiContext;
 
-    [ObservableProperty] private string? _substring = "";
-    [ObservableProperty] private string? _fileToOpen = "";
-    
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SendJobCommand))]
+    private string? _substring = "";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SendJobCommand))]
+    private string? _fileToOpen = "";
+
     public ObservableCollection<int> Clients { get; } = new ObservableCollection<int>();
+    public ObservableCollection<JobResult> Results { get; } = new ObservableCollection<JobResult>();
 
     public MainViewModel()
     {
@@ -22,9 +28,17 @@ public partial class MainViewModel : ObservableObject
         _server = new MasterServer();
         _server.SlaveConnected += ServerOnSlaveConnected;
         _server.SlaveDisconnected += ServerOnSlaveDisconnected;
+        _server.JobDone += ServerOnJobDone;
         Task.Run(() => _server.Start("http://localhost:5000/master/", CancellationToken.None));
 
         _uiContext = SynchronizationContext.Current;
+
+        Clients.CollectionChanged += (_, _) => SendJobCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ServerOnJobDone(JobResult obj)
+    {
+        _uiContext.Post(_ => Results.Add(obj), null);
     }
 
     private void ServerOnSlaveDisconnected(int obj)
@@ -37,10 +51,25 @@ public partial class MainViewModel : ObservableObject
         _uiContext?.Post(_ => Clients.Add(obj), null);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanSendJob))]
     private async Task SendJobAsync()
     {
         Debug.WriteLine("SEND JOB {0}", [FileToOpen]);
-        await _server.SendJob(File.ReadAllText(FileToOpen), "dm");
+        await _server.SendJob(File.ReadAllText(FileToOpen), Substring);
+    }
+
+    private bool CanSendJob()
+    {
+        if (string.IsNullOrWhiteSpace(Substring))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FileToOpen))
+        {
+            return false;
+        }
+
+        return true;
     }
 }

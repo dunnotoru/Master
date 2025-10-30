@@ -60,6 +60,7 @@ internal static class Program
                 Assignment? ass = MemoryPackSerializer.Deserialize<Assignment>(fullMessage);
                 //handle errors
 
+                await Task.Delay(TimeSpan.FromSeconds(1));
                 int count = FindSubstrings(ass.Text, ass.Substring);
 
                 AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);

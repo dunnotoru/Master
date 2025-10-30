@@ -12,6 +12,8 @@ class ClientHandler : IDisposable
 {
     private WebSocket ClientSocket { get; }
     public int Id { get; }
+    
+    public const int ChunkSize = 1024 * 64; //64 KB
 
     public event Action<ClientHandler, AssignmentResponse?>? MessageReceived;
     public event Action<ClientHandler>? ConnectionClosed;
@@ -25,12 +27,11 @@ class ClientHandler : IDisposable
     public async Task SendAssignment(Assignment assignment)
     {
         byte[] buffer = MemoryPackSerializer.Serialize(assignment);
-        int chunkSize = 1024;
         int offset = 0;
 
         while (offset < buffer.Length)
         {
-            int size = Math.Min(chunkSize, buffer.Length - offset);
+            int size = Math.Min(ChunkSize, buffer.Length - offset);
             ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
 
             bool endOfMessage = (offset + size) >= buffer.Length;
