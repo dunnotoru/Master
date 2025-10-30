@@ -47,6 +47,7 @@
               <StackPanel>
                 <TextBlock Text="{Binding JobId}" />
                 <TextBlock Text="{Binding ElapsedTime}" />
+                <TextBlock Text="{Binding Count}"/>
               </StackPanel>
             </Border>
           </DataTemplate>

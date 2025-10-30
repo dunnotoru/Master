@@ -34,7 +34,7 @@ public class MasterServer : IDisposable
         await Task.WhenAll(schedule, listen);
     }
 
-    private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
+    private async Task  ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
     {
         while (!cancellation.IsCancellationRequested)
         {
