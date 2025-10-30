@@ -108,7 +108,9 @@ public class MasterServer : IDisposable
             Debug.WriteLine("COULDN't READ RESPONSE");
             return;
         }
-
+        
+        Debug.WriteLine("RESPONSE RECEIVED {0}", [response]);
+        
         Debug.WriteLine("{0} {1} {2} ", response.JobId, response.ChunkIndex, response.Count);
 
         if (_jobs.TryGetValue(response.JobId, out Job? job))
@@ -136,16 +138,16 @@ public class MasterServer : IDisposable
 
         //TODO: int.Min(1024, text.Length) NOT 1 
         List<char[]> chunks = text.Chunk(int.Min(1024 * 64, text.Length)).ToList();
+        
+        Job job = new Job(chunks.Count);
+        job.Timer.Start();
+        _jobs[jobId] = job;
 
         for (int i = 0; i < chunks.Count; i++)
         {
             Assignment ass = new Assignment(jobId, i, chunks.Count, new string(chunks[i]), substring);
             await _assQueue.Writer.WriteAsync(ass);
         }
-
-        Job job = new Job(chunks.Count);
-        job.Timer.Start();
-        _jobs[jobId] = job;
     }
 
     private async Task JobSchedulingLoop(CancellationToken cancellation)

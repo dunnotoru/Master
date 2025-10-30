@@ -8,8 +8,8 @@ internal static class Program
 {
     private const int ChunkSize = 1024 * 64;
     private const int BufferSize = 1024 * 64;
-    
-    
+
+
     private static void Main(string[] args)
     {
         CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -43,9 +43,9 @@ internal static class Program
 
     private static async Task ListenForAssignments(ClientWebSocket socket)
     {
+        byte[] buffer = new byte[BufferSize];
         while (socket.State == WebSocketState.Open)
         {
-            byte[] buffer = new byte[BufferSize];
             using MemoryStream ms = new MemoryStream();
 
             WebSocketReceiveResult result;
@@ -65,30 +65,26 @@ internal static class Program
             } while (!result.EndOfMessage);
 
             Assignment? ass = MemoryPackSerializer.Deserialize<Assignment>(ms.ToArray());
-            
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            
+
+            // //TODO: ARTIFICIAL DELAY DAMMNNN
+            // await Task.Delay(TimeSpan.FromSeconds(1)); 
+
             int count = FindSubstrings(ass.Text, ass.Substring);
 
             AssignmentResponse response = new AssignmentResponse(ass.JobId, ass.ChunkId, count);
 
             Console.WriteLine("Handle Response {0} {1}", response.JobId, response.ChunkIndex);
 
-            buffer = MemoryPackSerializer.Serialize(response);
-
-            await socket.SendAsync(buffer, WebSocketMessageType.Binary, false,
-                CancellationToken.None);
-            
             byte[] data = MemoryPackSerializer.Serialize(response);
 
             int offset = 0;
 
-            while (offset < buffer.Length)
+            while (offset < data.Length)
             {
-                int size = Math.Min(ChunkSize, buffer.Length - offset);
-                bool endOfMessage = (offset + size) >= buffer.Length;
+                int size = Math.Min(ChunkSize, data.Length - offset);
+                bool endOfMessage = (offset + size) >= data.Length;
 
-                ArraySegment<byte> segment = new ArraySegment<byte>(buffer, offset, size);
+                ArraySegment<byte> segment = new ArraySegment<byte>(data, offset, size);
                 await socket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
 
                 offset += size;

@@ -1,9 +1,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.WebSockets;
-using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
 using MemoryPack;
 using Shared;
 
@@ -48,9 +45,9 @@ class ClientHandler : IDisposable
     {
         try
         {
+            byte[] buffer = new byte[BufferSize];
             while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
             {
-                byte[] buffer = new byte[BufferSize];
                 using MemoryStream ms = new MemoryStream();
 
                 WebSocketReceiveResult result;
@@ -71,7 +68,8 @@ class ClientHandler : IDisposable
                 } while (!result.EndOfMessage);
 
                 AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(ms.ToArray());
-                
+                ms.Position = 0;
+
                 MessageReceived?.Invoke(this, response);
             }
         }
