@@ -10,10 +10,10 @@ namespace Master;
 public class MasterServer : IDisposable
 {
     private int _count = 0;
-    private readonly Channel<Assignment> _assQueue = Channel.CreateUnbounded<Assignment>();
+    private readonly Channel<Assignment> _asses = Channel.CreateUnbounded<Assignment>();
 
-    private readonly ConcurrentDictionary<ClientHandler, Assignment?> _clients =
-        new ConcurrentDictionary<ClientHandler, Assignment?>();
+    private readonly ConcurrentDictionary<ClientHandler, int> _clients =
+        new ConcurrentDictionary<ClientHandler, int>();
 
     private readonly ConcurrentDictionary<Guid, Job> _jobs =
         new ConcurrentDictionary<Guid, Job>();
@@ -28,10 +28,7 @@ public class MasterServer : IDisposable
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
-        Task schedule = Task.Run(() => JobSchedulingLoop(cancellation), cancellation);
-        Task listen = Task.Run(() => ListenConnectionsLoop(listener, cancellation), cancellation);
-
-        await Task.WhenAll(schedule, listen);
+        await ListenConnectionsLoop(listener, cancellation);
     }
 
     private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
@@ -74,34 +71,34 @@ public class MasterServer : IDisposable
 
         WebSocket clientSocket = webSocketContext.WebSocket;
 
-        ClientHandler client = new ClientHandler(clientSocket, _count);
+        ClientHandler client = new ClientHandler(clientSocket, _count, _asses);
         client.ConnectionClosed += ClientOnConnectionClosed;
         client.MessageReceived += ClientOnMessageReceived;
 
         _ = client.ListenAsync(CancellationToken.None);
 
-        _clients[client] = null;
+        _clients[client] = _count;
 
         SlaveConnected?.Invoke(_count);
     }
 
     private void ClientOnConnectionClosed(ClientHandler obj)
     {
-        if (_clients.TryRemove(obj, out Assignment? ass))
+        if (_clients.TryRemove(obj, out _))
         {
             obj.ConnectionClosed -= ClientOnConnectionClosed;
             obj.MessageReceived -= ClientOnMessageReceived;
 
-            if (ass is not null)
+            if (obj.AssInWork is not null)
             {
-                _assQueue.Writer.TryWrite(ass);
+                _asses.Writer.TryWrite(obj.AssInWork);
             }
 
             SlaveDisconnected?.Invoke(obj.Id);
         }
     }
 
-    private void ClientOnMessageReceived(ClientHandler clientHandler, AssignmentResponse? response)
+    private void ClientOnMessageReceived(ClientHandler client, AssignmentResponse? response)
     {
         if (response is null)
         {
@@ -115,8 +112,7 @@ public class MasterServer : IDisposable
 
         if (_jobs.TryGetValue(response.JobId, out Job? job))
         {
-            _clients[clientHandler] = null;
-
+            client.SetAssignmentComplete();
             job.ReceivedResults.Add(response);
             if (job.ReceivedResults.Count >= job.Total)
             {
@@ -136,7 +132,6 @@ public class MasterServer : IDisposable
     {
         Guid jobId = Guid.NewGuid();
 
-        //TODO: int.Min(1024, text.Length) NOT 1 
         List<char[]> chunks = text.Chunk(int.Min(1024 * 64, text.Length)).ToList();
         
         Job job = new Job(chunks.Count);
@@ -146,32 +141,13 @@ public class MasterServer : IDisposable
         for (int i = 0; i < chunks.Count; i++)
         {
             Assignment ass = new Assignment(jobId, i, chunks.Count, new string(chunks[i]), substring);
-            await _assQueue.Writer.WriteAsync(ass);
-        }
-    }
-
-    private async Task JobSchedulingLoop(CancellationToken cancellation)
-    {
-        while (await _assQueue.Reader.WaitToReadAsync(cancellation))
-        {
-            foreach (KeyValuePair<ClientHandler, Assignment?> client in _clients.Where(c => c.Value is null))
-            {
-                if (_assQueue.Reader.TryRead(out Assignment? ass))
-                {
-                    _clients[client.Key] = ass;
-                    await client.Key.SendAssignment(ass);
-                }
-                else
-                {
-                    break;
-                }
-            }
+            await _asses.Writer.WriteAsync(ass);
         }
     }
 
     public void Dispose()
     {
-        foreach (KeyValuePair<ClientHandler, Assignment?> client in _clients)
+        foreach (KeyValuePair<ClientHandler, int> client in _clients)
         {
             client.Key.Dispose();
         }

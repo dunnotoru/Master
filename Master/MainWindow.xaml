@@ -7,6 +7,24 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance local:MainViewModel}"
         Title="MainWindow" Height="450" Width="800">
+  <Window.Resources>
+    <Style TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="Comic Sans MS" />
+      <Setter Property="FontWeight" Value="ExtraBold" />
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="FontFamily" Value="Comic Sans MS" />
+      <Setter Property="FontWeight" Value="ExtraBold" />
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="FontFamily" Value="Comic Sans MS" />
+      <Setter Property="FontWeight" Value="ExtraBold" />
+    </Style>
+    <Style TargetType="Label">
+      <Setter Property="FontFamily" Value="Comic Sans MS" />
+      <Setter Property="FontWeight" Value="ExtraBold" />
+    </Style>
+  </Window.Resources>
   <DockPanel>
     <StackPanel DockPanel.Dock="Right">
       <TextBlock Text="{Binding FileToOpen}" />
@@ -23,8 +41,7 @@
       <Button Command="{Binding }"
               Margin="10"
               Padding="5 2 "
-              Content="ПОРЕШАТЬ ВОПРОСИК САМОМУ"
-        />
+              Content="ПОРЕШАТЬ ВОПРОСИК САМОМУ" />
     </StackPanel>
     <Grid DockPanel.Dock="Left">
       <DockPanel HorizontalAlignment="Left" MinWidth="100">
@@ -47,7 +64,7 @@
               <StackPanel>
                 <TextBlock Text="{Binding JobId}" />
                 <TextBlock Text="{Binding ElapsedTime}" />
-                <TextBlock Text="{Binding Count}"/>
+                <TextBlock Text="{Binding Count}" />
               </StackPanel>
             </Border>
           </DataTemplate>

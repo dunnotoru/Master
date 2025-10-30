@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.WebSockets;
+using System.Threading.Channels;
 using MemoryPack;
 using Shared;
 
@@ -8,6 +9,7 @@ namespace Master;
 
 class ClientHandler : IDisposable
 {
+    private readonly ChannelReader<Assignment> _asses;
     private WebSocket ClientSocket { get; }
     public int Id { get; }
 
@@ -17,10 +19,19 @@ class ClientHandler : IDisposable
     public event Action<ClientHandler, AssignmentResponse?>? MessageReceived;
     public event Action<ClientHandler>? ConnectionClosed;
 
-    public ClientHandler(WebSocket clientSocket, int id)
+    public Assignment? AssInWork { get; private set; }
+
+    public ClientHandler(WebSocket clientSocket, int id, ChannelReader<Assignment> asses)
     {
+        _asses = asses;
         ClientSocket = clientSocket;
         Id = id;
+    }
+
+    public void SetAssignmentComplete()
+    {
+        AssInWork = null;
+        signal.Release();
     }
 
     public async Task SendAssignment(Assignment assignment)
@@ -39,12 +50,33 @@ class ClientHandler : IDisposable
 
             offset += size;
         }
+
+        AssInWork = assignment;
+    }
+
+    private SemaphoreSlim signal = new SemaphoreSlim(0, 1);
+
+    private async Task WorkLoop(CancellationToken cancellation)
+    {
+        while (await _asses.WaitToReadAsync(cancellation))
+        {
+            Debug.WriteLine("CLIENT {0} IS WAITING FOR WORK", [Id]);
+            if (AssInWork is null)
+            {
+                Debug.WriteLine("SENDING ASS");
+                Assignment ass = await _asses.ReadAsync(cancellation);
+                await SendAssignment(ass);
+                await signal.WaitAsync(cancellation);
+            }
+        }
     }
 
     public async Task ListenAsync(CancellationToken cancellation)
     {
         try
         {
+            Task.Run(() => WorkLoop(cancellation), cancellation);
+
             byte[] buffer = new byte[BufferSize];
             while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
             {
@@ -68,7 +100,6 @@ class ClientHandler : IDisposable
                 } while (!result.EndOfMessage);
 
                 AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(ms.ToArray());
-                ms.Position = 0;
 
                 MessageReceived?.Invoke(this, response);
             }
