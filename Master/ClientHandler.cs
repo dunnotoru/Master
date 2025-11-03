@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Net.WebSockets;
@@ -7,11 +8,12 @@ using Shared;
 
 namespace Master;
 
-class ClientHandler : IDisposable
+public class ClientHandler : IDisposable
 {
     private readonly Channel<Assignment> _asses;
-    private readonly ChannelWriter<AssignmentResponse> _results;
-    private WebSocket ClientSocket { get; }
+    private readonly ChannelWriter<AssignmentResult> _results;
+
+    private readonly WebSocket _clientSocket;
     public int Id { get; }
 
     public const int ChunkSize = 1024 * 64; //64 KB
@@ -19,26 +21,21 @@ class ClientHandler : IDisposable
 
     public event Action<ClientHandler>? ConnectionClosed;
 
+    private readonly ConcurrentDictionary<AssignmentIdentifier, TaskCompletionSource<AssignmentResult>>
+        _pendingAssignments = new ConcurrentDictionary<AssignmentIdentifier, TaskCompletionSource<AssignmentResult>>();
+
     public ClientHandler(WebSocket clientSocket, int id, Channel<Assignment> asses,
-        ChannelWriter<AssignmentResponse> results)
+        ChannelWriter<AssignmentResult> results)
     {
+        _clientSocket = clientSocket;
+        Id = id;
         _asses = asses;
         _results = results;
-        ClientSocket = clientSocket;
-        Id = id;
     }
 
-    private Assignment? _lastAssignment;
-    private TaskCompletionSource<AssignmentResponse>? _pendingResponse;
-
-    private async Task<AssignmentResponse> SendAssignmentAsync(Assignment assignment)
+    private async Task SendMessageAsync(ServerMessage message)
     {
-        _lastAssignment = assignment;
-        _pendingResponse = new TaskCompletionSource<AssignmentResponse>(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-
-        byte[] data = MemoryPackSerializer.Serialize(assignment);
+        byte[] data = MemoryPackSerializer.Serialize(message);
 
         int offset = 0;
 
@@ -48,89 +45,133 @@ class ClientHandler : IDisposable
             bool endOfMessage = offset + size >= data.Length;
 
             ArraySegment<byte> segment = new ArraySegment<byte>(data, offset, size);
-            await ClientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
+            await _clientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
 
             offset += size;
         }
-
-        return await _pendingResponse.Task;
     }
 
-    private async Task ScheduleLoop(CancellationToken cancellation)
+    private async Task<AssignmentResult> SendAssignmentAsync(Assignment assignment)
+    {
+        TaskCompletionSource<AssignmentResult> tcs =
+            new TaskCompletionSource<AssignmentResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
+
+        _pendingAssignments[assignment.Id] = tcs;
+
+        ServerMessage message =
+            new ServerMessage(ServerMessageType.Assignment, MemoryPackSerializer.Serialize(assignment));
+
+        await SendMessageAsync(message);
+
+        return await tcs.Task;
+    }
+
+    private async Task ScheduleLoopAsync(CancellationToken cancellation)
     {
         while (await _asses.Reader.WaitToReadAsync(cancellation))
         {
-            Debug.WriteLine("CLIENT {0} IS READY", [Id]);
-            Debug.WriteLine("SENDING ASS");
+            Debug.WriteLine("Client {0} Is Ready", [Id]);
+            Debug.WriteLine("Sending Assignment");
             Assignment ass = await _asses.Reader.ReadAsync(cancellation);
-            AssignmentResponse result = await SendAssignmentAsync(ass);
-            await _results.WriteAsync(result, cancellation);
+
+            try
+            {
+                AssignmentResult result = await SendAssignmentAsync(ass);
+                await _results.WriteAsync(result, cancellation);
+            }
+            catch (TaskCanceledException ex)
+            {
+                Debug.WriteLine(ex);
+                await _asses.Writer.WriteAsync(ass, cancellation);
+            }
         }
     }
 
-    public async Task ListenAsync(CancellationToken cancellation)
+    public async Task WorkLoopAsync(CancellationToken cancellation)
     {
         try
         {
-            _ = ScheduleLoop(cancellation);
+            Task schedule = ScheduleLoopAsync(cancellation);
+            Task listen = ListenLoopAsync(cancellation);
 
-            byte[] buffer = new byte[BufferSize];
-            using MemoryStream ms = new MemoryStream();
-            while (ClientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
-            {
-                WebSocketReceiveResult result;
-                do
-                {
-                    result =
-                        await ClientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        await ClientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
-                        Debug.WriteLine("Closed Normal Closure");
-                        ConnectionClosed?.Invoke(this);
-                        if (_lastAssignment is not null)
-                        {
-                            _pendingResponse?.TrySetCanceled(cancellation);
-                            await _asses.Writer.WriteAsync(_lastAssignment, cancellation);
-                        }
-
-                        return;
-                    }
-
-                    ms.Write(buffer, 0, result.Count);
-                } while (!result.EndOfMessage);
-
-                AssignmentResponse? response = MemoryPackSerializer.Deserialize<AssignmentResponse>(ms.ToArray());
-                ms.SetLength(0);
-                
-                if (response is not null
-                    && _lastAssignment is not null
-                    && response.JobId == _lastAssignment.JobId
-                    && response.ChunkId == _lastAssignment.ChunkId)
-                {
-                    _pendingResponse?.TrySetResult(response);
-                }
-            }
+            await Task.WhenAll(schedule, listen);
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Debug.WriteLine(e.Message);
-            await ClientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
+            Debug.WriteLine(ex.Message);
+            await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
                 CancellationToken.None);
-
-            if (_lastAssignment is not null)
+        }
+        finally
+        {
+            foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
             {
-                await _asses.Writer.WriteAsync(_lastAssignment, cancellation);
+                pending.TrySetCanceled(CancellationToken.None);
             }
 
-            _pendingResponse?.TrySetCanceled(CancellationToken.None);
+            _pendingAssignments.Clear();
             ConnectionClosed?.Invoke(this);
         }
     }
 
+    private async Task ListenLoopAsync(CancellationToken cancellation)
+    {
+        byte[] buffer = new byte[BufferSize];
+        while (_clientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
+        {
+            ClientMessage? message = await ReceiveMessage(buffer, cancellation);
+
+            if (message is not null)
+            {
+                HandleMessage(message);
+            }
+        }
+    }
+
+    private void HandleMessage(ClientMessage message)
+    {
+        if (message.MessageType == ClientMessageType.Result)
+        {
+            AssignmentResult? response = MemoryPackSerializer.Deserialize<AssignmentResult>(message.Payload);
+            if (response is null) return;
+
+            AssignmentIdentifier id = response.Id;
+            if (_pendingAssignments.TryGetValue(id, out TaskCompletionSource<AssignmentResult>? tcs))
+            {
+                tcs.SetResult(response);
+                _pendingAssignments.Remove(id, out _);
+            }
+        }
+    }
+
+    private async Task<ClientMessage?> ReceiveMessage(byte[] buffer, CancellationToken cancellation)
+    {
+        using MemoryStream ms = new MemoryStream();
+        WebSocketReceiveResult result;
+        do
+        {
+            result =
+                await _clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellation);
+
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                Debug.WriteLine("Closed Normal Closure");
+                return null;
+            }
+
+            ms.Write(buffer, 0, result.Count);
+        } while (!result.EndOfMessage);
+
+        ClientMessage? message = MemoryPackSerializer.Deserialize<ClientMessage>(ms.ToArray());
+
+        return message;
+    }
+
     public void Dispose()
     {
-        ClientSocket.Dispose();
+        _clientSocket.Dispose();
     }
 }

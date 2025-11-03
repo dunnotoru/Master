@@ -11,12 +11,12 @@ public sealed class MasterServer : IDisposable
 {
     private int _count = 0;
     private readonly Channel<Assignment> _asses = Channel.CreateUnbounded<Assignment>();
-    private readonly Channel<AssignmentResponse> _results = Channel.CreateUnbounded<AssignmentResponse>();
+    private readonly Channel<AssignmentResult> _results = Channel.CreateUnbounded<AssignmentResult>();
 
-    private readonly ConcurrentDictionary<ClientHandler, int> _clients =
+    private readonly ConcurrentDictionary<ClientHandler, int> _connectedClients =
         new ConcurrentDictionary<ClientHandler, int>();
 
-    private readonly ConcurrentDictionary<Guid, Job> _jobs =
+    private readonly ConcurrentDictionary<Guid, Job> _jobsInProgress =
         new ConcurrentDictionary<Guid, Job>();
 
     public event Action<int>? SlaveConnected;
@@ -29,13 +29,13 @@ public sealed class MasterServer : IDisposable
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
-        Task result = ResultAssemblingLoop(cancellation);
-        Task listen = ListenConnectionsLoop(listener, cancellation);
+        Task result = ResultAssemblingLoopAsync(cancellation);
+        Task listen = ListenConnectionsLoopAsync(listener, cancellation);
 
         await Task.WhenAll(result, listen);
     }
 
-    private async Task ListenConnectionsLoop(HttpListener listener, CancellationToken cancellation)
+    private async Task ListenConnectionsLoopAsync(HttpListener listener, CancellationToken cancellation)
     {
         while (!cancellation.IsCancellationRequested)
         {
@@ -43,30 +43,32 @@ public sealed class MasterServer : IDisposable
 
             if (listenerContext.Request.IsWebSocketRequest)
             {
-                Debug.WriteLine("It Is WebSocket Request");
-                await ProcessConnection(listenerContext);
+                Debug.WriteLine("WebSocket Request from {0}", listenerContext.Request.Url);
+                await HandleConnectionAsync(listenerContext, cancellation);
             }
             else
             {
-                Debug.WriteLine("Regular Request - Fail");
+                Debug.WriteLine("Regular Request. Ignoring");
                 listenerContext.Response.StatusCode = 404;
                 listenerContext.Response.Close();
             }
         }
     }
 
-    private async Task ProcessConnection(HttpListenerContext listenerContext)
+    private async Task HandleConnectionAsync(HttpListenerContext listenerContext, CancellationToken cancellation)
     {
         WebSocketContext? webSocketContext;
+
         try
         {
-            Debug.WriteLine("Trying To Accept WebSocket");
+            Debug.WriteLine("Accepting WebSocket Connection");
             webSocketContext = await listenerContext.AcceptWebSocketAsync(subProtocol: null);
+            Debug.WriteLine("Success");
             Interlocked.Increment(ref _count);
         }
         catch (Exception e)
         {
-            Debug.WriteLine("Failed");
+            Debug.WriteLine("Fail");
             Console.WriteLine(e.Message);
             listenerContext.Response.StatusCode = 500;
             listenerContext.Response.Close();
@@ -74,53 +76,54 @@ public sealed class MasterServer : IDisposable
         }
 
         WebSocket clientSocket = webSocketContext.WebSocket;
-
         ClientHandler client = new ClientHandler(clientSocket, _count, _asses, _results.Writer);
         client.ConnectionClosed += ClientOnConnectionClosed;
+        _ = client.WorkLoopAsync(cancellation);
 
-        _ = client.ListenAsync(CancellationToken.None);
-
-        _clients[client] = _count;
+        _connectedClients[client] = _count;
 
         SlaveConnected?.Invoke(_count);
     }
 
-    private async Task ResultAssemblingLoop(CancellationToken cancellation)
+    private async Task ResultAssemblingLoopAsync(CancellationToken cancellation)
     {
         while (await _results.Reader.WaitToReadAsync(cancellation))
         {
-            AssignmentResponse response = await _results.Reader.ReadAsync(cancellation);
-            Debug.WriteLine("RESPONSE RECEIVED: {0} {1} {2} ", response.JobId, response.ChunkId, response.Count);
+            AssignmentResult result = await _results.Reader.ReadAsync(cancellation);
+            Debug.WriteLine("Received Result For Job {0}, Value: {1}", result.Id, result.Count);
 
-            if (_jobs.TryGetValue(response.JobId, out Job? job))
+            if (_jobsInProgress.TryGetValue(result.Id.JobId, out Job? job))
             {
-                job.ReceivedResults.Add(response);
+                job.ReceivedResults.Add(result);
                 if (job.ReceivedResults.Count >= job.Total)
                 {
                     Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
-                    _jobs.Remove(response.JobId, out _);
+                    _jobsInProgress.Remove(result.Id.JobId, out _);
                     job.Timer.Stop();
-                    JobDone?.Invoke(new JobResult(response.JobId, job.Timer.Elapsed,
+                    JobDone?.Invoke(new JobResult(result.Id.JobId, job.Timer.Elapsed,
                         job.ReceivedResults.Sum(x => x.Count)));
                     Debug.WriteLine(job.Timer.Elapsed.Seconds);
                 }
             }
+            else
+            {
+                Debug.WriteLine("There's No Job With {0} in Progress", [result.Id.JobId]);
+            }
 
-            Debug.WriteLine("JOBS REMAINING {0}", [string.Join(' ', _jobs.Keys)]);
+            Debug.WriteLine("JOBS REMAINING {0}", [string.Join('\n', _jobsInProgress.Keys)]);
         }
     }
 
-    private void ClientOnConnectionClosed(ClientHandler obj)
+    private void ClientOnConnectionClosed(ClientHandler clientHandler)
     {
-        if (_clients.TryRemove(obj, out _))
+        if (_connectedClients.TryRemove(clientHandler, out _))
         {
-            obj.ConnectionClosed -= ClientOnConnectionClosed;
-
-            SlaveDisconnected?.Invoke(obj.Id);
+            clientHandler.ConnectionClosed -= ClientOnConnectionClosed;
+            SlaveDisconnected?.Invoke(clientHandler.Id);
         }
     }
 
-    public async Task AddJob(string text, string substring)
+    public async Task AddJobAsync(string text, string substring) //TODO: change to generic job
     {
         Guid jobId = Guid.NewGuid();
 
@@ -128,18 +131,19 @@ public sealed class MasterServer : IDisposable
 
         Job job = new Job(chunks.Count);
         job.Timer.Start();
-        _jobs[jobId] = job;
+        _jobsInProgress[jobId] = job;
 
         for (int i = 0; i < chunks.Count; i++)
         {
-            Assignment ass = new Assignment(jobId, i, chunks.Count, new string(chunks[i]), substring);
+            AssignmentIdentifier id = new AssignmentIdentifier(jobId, i);
+            Assignment ass = new Assignment(id, chunks.Count, new string(chunks[i]), substring);
             await _asses.Writer.WriteAsync(ass);
         }
     }
 
     public void Dispose()
     {
-        foreach (KeyValuePair<ClientHandler, int> client in _clients)
+        foreach (KeyValuePair<ClientHandler, int> client in _connectedClients)
         {
             client.Key.Dispose();
         }

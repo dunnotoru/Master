@@ -10,9 +10,7 @@ public enum ClientMessageType
 }
 
 [MemoryPackable]
-public partial class ClientMessage
+public partial record ClientMessage(ClientMessageType MessageType, byte[]? Payload)
 {
-    public Guid id;
-    public ClientMessageType type;
-    public byte[] payload;
+    public Guid Id { get; } = Guid.NewGuid();
 }

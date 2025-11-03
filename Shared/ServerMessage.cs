@@ -9,10 +9,7 @@ public enum ServerMessageType
 }
 
 [MemoryPackable]
-public partial class ServerMessage
+public partial record ServerMessage(ServerMessageType MessageType, byte[] Payload)
 {
-    public Guid id;
-    public Guid requestId;
-    public ServerMessageType type;
-    public byte[] payload;
+    public Guid Id { get; } = Guid.NewGuid();
 }

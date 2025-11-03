@@ -55,7 +55,7 @@ public partial class MainViewModel : ObservableObject
     private async Task SendJobAsync()
     {
         Debug.WriteLine("SEND JOB {0}", [FileToOpen]);
-        await _server.AddJob(await File.ReadAllTextAsync(FileToOpen), Substring);
+        await _server.AddJobAsync(await File.ReadAllTextAsync(FileToOpen), Substring);
     }
 
     private bool CanSendJob()

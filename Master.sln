@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Slave", "Slave\Slave.csproj
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{BF7E4574-AD31-4047-B828-60A2E3F27C84}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CountSubstrings", "CountSubstrings\CountSubstrings.csproj", "{A6591DAC-2FA0-4AA0-9FB7-C4DCDC163052}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{BF7E4574-AD31-4047-B828-60A2E3F27C84}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BF7E4574-AD31-4047-B828-60A2E3F27C84}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BF7E4574-AD31-4047-B828-60A2E3F27C84}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6591DAC-2FA0-4AA0-9FB7-C4DCDC163052}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6591DAC-2FA0-4AA0-9FB7-C4DCDC163052}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6591DAC-2FA0-4AA0-9FB7-C4DCDC163052}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6591DAC-2FA0-4AA0-9FB7-C4DCDC163052}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
