@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.WebSockets;
 using System.Threading.Channels;
+using MemoryPack;
 using Shared;
 
 namespace Master;
@@ -90,7 +91,7 @@ public sealed class MasterServer : IDisposable
         while (await _results.Reader.WaitToReadAsync(cancellation))
         {
             AssignmentResult result = await _results.Reader.ReadAsync(cancellation);
-            Debug.WriteLine("Received Result For Job {0}, Value: {1}", result.Id, result.Count);
+            Debug.WriteLine("Received Result For Job {0}", result.Id);
 
             if (_jobsInProgress.TryGetValue(result.Id.JobId, out Job? job))
             {
@@ -100,8 +101,7 @@ public sealed class MasterServer : IDisposable
                     Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
                     _jobsInProgress.Remove(result.Id.JobId, out _);
                     job.Timer.Stop();
-                    JobDone?.Invoke(new JobResult(result.Id.JobId, job.Timer.Elapsed,
-                        job.ReceivedResults.Sum(x => x.Count)));
+                    JobDone?.Invoke(new JobResult(result.Id.JobId, job.Timer.Elapsed, 1));
                     Debug.WriteLine(job.Timer.Elapsed.Seconds);
                 }
             }
@@ -136,7 +136,14 @@ public sealed class MasterServer : IDisposable
         for (int i = 0; i < chunks.Count; i++)
         {
             AssignmentIdentifier id = new AssignmentIdentifier(jobId, i);
-            Assignment ass = new Assignment(id, chunks.Count, new string(chunks[i]), substring);
+            Assignment ass = new Assignment(id, chunks.Count, "count-substrings",
+                new Dictionary<string, byte[]>
+                {
+                    ["text"] = MemoryPackSerializer.Serialize(new string(chunks[i])),
+                    ["substring"] = MemoryPackSerializer.Serialize(substring)
+                }
+            );
+
             await _asses.Writer.WriteAsync(ass);
         }
     }

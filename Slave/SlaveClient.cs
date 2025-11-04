@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Reflection;
 using MemoryPack;
 using Shared;
 
@@ -10,9 +11,11 @@ public class SlaveClient
     public const int BufferSize = 1024 * 64;
 
     private readonly ClientWebSocket _clientSocket;
+    private readonly AlgorithmProvider _provider;
 
-    public SlaveClient()
+    public SlaveClient(AlgorithmProvider provider)
     {
+        _provider = provider;
         _clientSocket = new ClientWebSocket();
     }
 
@@ -28,7 +31,7 @@ public class SlaveClient
         catch (Exception e)
         {
             Console.WriteLine("Fail");
-            Console.WriteLine(e.Message);
+            Console.WriteLine(e);
         }
         finally
         {
@@ -41,13 +44,10 @@ public class SlaveClient
         byte[] buffer = new byte[BufferSize];
         while (_clientSocket.State == WebSocketState.Open)
         {
-            ServerMessage? message = await ReceiveMessageAsync(buffer);
+            ClientMessage request = new ClientMessage(ClientMessageType.AssignmentRequest, Array.Empty<byte>());
+            await SendMessageAsync(request);
 
-            if (message is null)
-            {
-                ClientMessage response = new ClientMessage(ClientMessageType.Error, null);
-                await SendMessageAsync(response);
-            }
+            ServerMessage? message = await ReceiveMessageAsync(buffer);
 
             if (message is not null)
             {
@@ -90,17 +90,31 @@ public class SlaveClient
                 Console.WriteLine("Couldn't Deserialize Assignment");
                 return;
             }
-            
+
             Console.WriteLine("Handling Assignment {0}", ass.Id);
 
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            
-            //int count = FindSubstrings(ass.Text, ass.Substring);
-            
-            AssignmentResult result = new AssignmentResult(ass.Id, 1);
-            byte[] payload = MemoryPackSerializer.Serialize(result);
-            ClientMessage response = new ClientMessage(ClientMessageType.Result, payload);
-            await SendMessageAsync(response);
+            if (_provider.TryGetExecutor(ass.AlgorithmName, out IAlgorithmExecutor? executor))
+            {
+                byte[] v = executor.Execute(ass.Parameters);
+                AssignmentResult result = new AssignmentResult(ass.Id, MemoryPackSerializer.Serialize(v));
+                byte[] payload = MemoryPackSerializer.Serialize(result);
+                ClientMessage response = new ClientMessage(ClientMessageType.Result, payload);
+                await SendMessageAsync(response);
+            }
+            else
+            {
+                Console.WriteLine("No Algorithm With Name {0}. Trying To Request", ass.AlgorithmName);
+                byte[] payload = MemoryPackSerializer.Serialize(ass.AlgorithmName);
+                ClientMessage request = new ClientMessage(ClientMessageType.AlgorithmRequest, payload);
+                await SendMessageAsync(request);
+            }
+
+            return;
+        }
+
+        if (message.MessageType == ServerMessageType.Algorithm)
+        {
+            _provider.AddExecutor("count-substrings", message.Payload);
         }
     }
 

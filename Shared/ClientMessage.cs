@@ -5,6 +5,7 @@ namespace Shared;
 public enum ClientMessageType
 {
     Result = 0,
+    AssignmentRequest,
     AlgorithmRequest,
     Error
 }

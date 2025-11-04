@@ -4,20 +4,32 @@ internal static class Program
 {
     private static async Task Main(string[] args)
     {
-        try
+        bool run = true;
+        do
         {
-            await Run();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine("An error occured during execution {0}", e);
-        }
+            try
+            {
+                await Run();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("An error occured during execution {0}", e);
+            }
+
+            Console.WriteLine("Try To Reconnect? [Y/N]");
+            ConsoleKeyInfo key = Console.ReadKey();
+            if (key.Key == ConsoleKey.N)
+            {
+                run = false;
+            }
+        } while (run);
     }
 
     private static async Task Run()
     {
+        AlgorithmProvider provider = new AlgorithmProvider();
         CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        SlaveClient client = new SlaveClient();
+        SlaveClient client = new SlaveClient(provider);
         Task connection = client.Connect(new Uri("ws://localhost:5000/master"), cts.Token);
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();

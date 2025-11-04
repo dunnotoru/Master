@@ -56,7 +56,7 @@
       </DockPanel>
     </Grid>
     <DockPanel>
-      <TextBlock DockPanel.Dock="Top" HorizontalAlignment="Center">РЕЗУЛЬТАТЫ ЕПТА</TextBlock>
+      <TextBlock DockPanel.Dock="Top" HorizontalAlignment="Center">РЕЗУЛЬТАТЫ</TextBlock>
       <ListView ItemsSource="{Binding Results}" BorderBrush="Black" Margin="10" BorderThickness="5">
         <ListView.ItemTemplate>
           <DataTemplate>
