@@ -12,6 +12,7 @@ public sealed class ClientHandler : IDisposable
 {
     private readonly Channel<Assignment> _asses;
     private readonly ChannelWriter<AssignmentResult> _results;
+    private readonly AlgorithmProvider _provider;
     private readonly Channel<ServerMessage> _messages;
 
     private readonly WebSocket _clientSocket;
@@ -26,12 +27,13 @@ public sealed class ClientHandler : IDisposable
         _pendingAssignments = new ConcurrentDictionary<AssignmentIdentifier, TaskCompletionSource<AssignmentResult>>();
 
     public ClientHandler(WebSocket clientSocket, int id, Channel<Assignment> asses,
-        ChannelWriter<AssignmentResult> results)
+        ChannelWriter<AssignmentResult> results, AlgorithmProvider provider)
     {
         _clientSocket = clientSocket;
         Id = id;
         _asses = asses;
         _results = results;
+        _provider = provider;
         _messages = Channel.CreateUnbounded<ServerMessage>();
     }
 
@@ -84,6 +86,13 @@ public sealed class ClientHandler : IDisposable
             }
             catch (WebSocketException ex)
             {
+                foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
+                {
+                    pending.TrySetCanceled(CancellationToken.None);
+                }
+
+                _pendingAssignments.Clear();
+                ConnectionClosed?.Invoke(this);
                 Debug.Print("{0}", ex);
             }
         }
@@ -220,18 +229,20 @@ public sealed class ClientHandler : IDisposable
         Debug.WriteLine("Client Is Requesting Algorithm {0}", name);
 
         //TODO: this is dummy
-        if (true)
+
+        if (_provider.TryGetExecutor(name, out FileInfo? executor))
         {
-            byte[] file = await File.ReadAllBytesAsync(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "CountSubstrings.dll"));
-            ServerMessage found = new ServerMessage(ServerMessageType.Algorithm, file);
+            byte[] file = await File.ReadAllBytesAsync(executor.FullName);
+            ServerMessage found = new ServerMessage(ServerMessageType.Algorithm,
+                MemoryPackSerializer.Serialize(new AlgorithmData(name, file)));
             await _messages.Writer.WriteAsync(found);
         }
         else
         {
             ServerMessage notFound =
-                new ServerMessage(ServerMessageType.Algorithm, MemoryPackSerializer.Serialize("not-found"));
-            await SendMessageAsync(notFound);
+                new ServerMessage(ServerMessageType.Algorithm,
+                    MemoryPackSerializer.Serialize(new AlgorithmData("not-found", Array.Empty<byte>())));
+            await _messages.Writer.WriteAsync(notFound);
         }
 
         foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)

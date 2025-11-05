@@ -61,6 +61,7 @@ public class AlgorithmProvider
         }
 
         string path = Path.Combine(ModuleDirectory, name);
+        path = Path.ChangeExtension(path, "dll");
         File.WriteAllBytes(path, raw);
         IAlgorithmExecutor instance = (IAlgorithmExecutor)Activator.CreateInstance(executor)!;
 

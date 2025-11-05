@@ -25,7 +25,8 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel()
     {
         Debug.WriteLine("SERVER VIEWMODEL START");
-        _server = new MasterServer();
+        AlgorithmProvider provider = new AlgorithmProvider();
+        _server = new MasterServer(provider);
         _server.SlaveConnected += ServerOnSlaveConnected;
         _server.SlaveDisconnected += ServerOnSlaveDisconnected;
         _server.JobDone += ServerOnJobDone;

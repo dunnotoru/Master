@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Reflection;
+using System.Threading.Channels;
 using MemoryPack;
 using Shared;
 
@@ -21,17 +22,21 @@ public class SlaveClient
 
     public async Task Connect(Uri uri, CancellationToken cancellation)
     {
+        Console.WriteLine("Trying To Connect To {0}", uri);
+        await _clientSocket.ConnectAsync(uri, cancellation);
+        Console.WriteLine("Success");
+
         try
         {
-            Console.WriteLine("Trying To Connect To {0}", uri);
-            await _clientSocket.ConnectAsync(uri, cancellation);
-            Console.WriteLine("Success");
-            await ListenLoopAsync();
+            CancellationTokenSource tcs = new CancellationTokenSource();
+            Task send = SendLoopAsync(tcs.Token);
+            Task receive = ReceiveLoopAsync(tcs.Token);
+            await Task.WhenAny(send, receive);
         }
         catch (Exception e)
         {
-            Console.WriteLine("Fail");
-            Console.WriteLine(e);
+            await Console.Error.WriteLineAsync("Fail (Caught in Connection)");
+            Console.Error.WriteLine(e);
         }
         finally
         {
@@ -39,20 +44,46 @@ public class SlaveClient
         }
     }
 
-    private async Task ListenLoopAsync()
+    private readonly Channel<ClientMessage> _messages = Channel.CreateUnbounded<ClientMessage>();
+
+    private async Task SendLoopAsync(CancellationToken cancellation)
     {
-        byte[] buffer = new byte[BufferSize];
-        while (_clientSocket.State == WebSocketState.Open)
+        try
         {
-            ClientMessage request = new ClientMessage(ClientMessageType.AssignmentRequest, Array.Empty<byte>());
-            await SendMessageAsync(request);
-
-            ServerMessage? message = await ReceiveMessageAsync(buffer);
-
-            if (message is not null)
+            while (await _messages.Reader.WaitToReadAsync(cancellation))
             {
-                await HandleMessage(message);
+                ClientMessage msg = await _messages.Reader.ReadAsync(cancellation);
+                await SendMessageAsync(msg);
             }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            throw;
+        }
+    }
+
+    private async Task ReceiveLoopAsync(CancellationToken cancellation)
+    {
+        try
+        {
+            byte[] buffer = new byte[BufferSize];
+            ClientMessage request = new ClientMessage(ClientMessageType.AssignmentRequest, Array.Empty<byte>());
+            await _messages.Writer.WriteAsync(request, cancellation);
+            while (_clientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
+            {
+                ServerMessage? message = await ReceiveMessageAsync(buffer);
+
+                if (message is not null)
+                {
+                    await HandleMessage(message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            throw;
         }
     }
 
@@ -95,18 +126,21 @@ public class SlaveClient
 
             if (_provider.TryGetExecutor(ass.AlgorithmName, out IAlgorithmExecutor? executor))
             {
+                await Task.Delay(TimeSpan.FromSeconds(2));
                 byte[] v = executor.Execute(ass.Parameters);
                 AssignmentResult result = new AssignmentResult(ass.Id, MemoryPackSerializer.Serialize(v));
                 byte[] payload = MemoryPackSerializer.Serialize(result);
                 ClientMessage response = new ClientMessage(ClientMessageType.Result, payload);
-                await SendMessageAsync(response);
+                await _messages.Writer.WriteAsync(response);
+                await _messages.Writer.WriteAsync(new ClientMessage(ClientMessageType.AssignmentRequest,
+                    Array.Empty<byte>()));
             }
             else
             {
                 Console.WriteLine("No Algorithm With Name {0}. Trying To Request", ass.AlgorithmName);
                 byte[] payload = MemoryPackSerializer.Serialize(ass.AlgorithmName);
                 ClientMessage request = new ClientMessage(ClientMessageType.AlgorithmRequest, payload);
-                await SendMessageAsync(request);
+                await _messages.Writer.WriteAsync(request);
             }
 
             return;
@@ -114,7 +148,17 @@ public class SlaveClient
 
         if (message.MessageType == ServerMessageType.Algorithm)
         {
-            _provider.AddExecutor("count-substrings", message.Payload);
+            AlgorithmData? data = MemoryPackSerializer.Deserialize<AlgorithmData>(message.Payload);
+            if (data is null) return;
+
+            if (string.Equals(data.Name, "not-found", StringComparison.InvariantCultureIgnoreCase))
+            {
+                throw new InvalidOperationException("Requested algorithm wasn't found");
+            }
+
+            _provider.AddExecutor(data.Name, data.RawFileData);
+            await _messages.Writer.WriteAsync(new ClientMessage(ClientMessageType.AssignmentRequest,
+                Array.Empty<byte>()));
         }
     }
 

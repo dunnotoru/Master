@@ -3,14 +3,14 @@ using System.IO;
 using System.Reflection;
 using Shared;
 
-namespace Slave;
+namespace Master;
 
 public class AlgorithmProvider
 {
     public string ModuleDirectory { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lab", "MasterModules");
 
-    private Dictionary<string, IAlgorithmExecutor> _modules = new Dictionary<string, IAlgorithmExecutor>();
+    private Dictionary<string, FileInfo> _modules = new Dictionary<string, FileInfo>();
 
     public void ScanModules()
     {
@@ -35,12 +35,12 @@ public class AlgorithmProvider
         {
             return;
         }
-
+        
         IAlgorithmExecutor instance = (IAlgorithmExecutor)Activator.CreateInstance(executor)!;
-        _modules[instance.Name] = instance;
+        _modules[instance.Name] = new FileInfo(file);
     }
 
-    public bool TryGetExecutor(string name, [NotNullWhen(true)] out IAlgorithmExecutor? executor)
+    public bool TryGetExecutor(string name, [NotNullWhen(true)] out FileInfo? executor)
     {
         return _modules.TryGetValue(name, out executor);
     }

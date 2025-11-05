@@ -24,8 +24,16 @@ public sealed class MasterServer : IDisposable
     public event Action<int>? SlaveDisconnected;
     public event Action<JobResult>? JobDone;
 
+    private readonly AlgorithmProvider _provider;
+
+    public MasterServer(AlgorithmProvider provider)
+    {
+        _provider = provider;
+    }
+
     public async Task Start(string listenerPrefix, CancellationToken cancellation)
     {
+        _provider.ScanModules();
         HttpListener listener = new HttpListener();
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
@@ -77,7 +85,7 @@ public sealed class MasterServer : IDisposable
         }
 
         WebSocket clientSocket = webSocketContext.WebSocket;
-        ClientHandler client = new ClientHandler(clientSocket, _count, _asses, _results.Writer);
+        ClientHandler client = new ClientHandler(clientSocket, _count, _asses, _results.Writer, _provider);
         client.ConnectionClosed += ClientOnConnectionClosed;
         _ = client.WorkLoopAsync(cancellation);
 
