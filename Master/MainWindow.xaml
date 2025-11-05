@@ -27,14 +27,30 @@
   </Window.Resources>
   <DockPanel>
     <StackPanel DockPanel.Dock="Right">
+      <ListView ItemsSource="{Binding Modules}"
+                SelectedItem="{Binding SelectedModule}"
+                SelectionMode="Single"
+                MaxWidth="500"
+                Margin="10" MinHeight="100">
+        <ListView.ItemTemplate>
+          <DataTemplate>
+            <StackPanel>
+              <TextBlock Text="{Binding Executor.Name}" FontSize="16" />
+              <TextBlock Text="{Binding ModuleFile.Name}" FontSize="10" TextWrapping="WrapWithOverflow" />
+            </StackPanel>
+          </DataTemplate>
+        </ListView.ItemTemplate>
+      </ListView>
       <TextBlock Text="{Binding FileToOpen}" />
       <Button Click="ButtonBase_OnClick"
               Margin="10"
               Padding="5 2"
-              Content="ВЫБРАТЬ ТЕКСТИК" />
-      <Label Content="НАЙТИ СЛОВЕЧКО" />
-      <TextBox Text="{Binding Substring}" />
-      <Button Command="{Binding SendJobCommand}"
+              Content="ВЫБРАТЬ ДОКУМЕНТИК (*.txt)" />
+      <TextBlock Text="СХЕМКА АРГУМЕНТИКОВ:" />
+      <TextBlock Text="{Binding SelectedModule.Executor.ArgsSchema}" />
+      <Label Content="АРГУМЕНТИКИ БУДУТ?" />
+      <TextBox Text="{Binding Args}" />
+      <Button Command="{Binding EnqueueJobCommand}"
               Margin="10"
               Padding="5 2"
               Content="ОБКАШЛЯТЬ С КЛИЕНТИКАМИ" />
@@ -62,9 +78,9 @@
           <DataTemplate>
             <Border BorderBrush="Red" BorderThickness="3">
               <StackPanel>
-                <TextBlock Text="{Binding JobId}" />
-                <TextBlock Text="{Binding ElapsedTime}" />
-                <TextBlock Text="{Binding Count}" />
+                <TextBlock Text="{Binding Id}" />
+                <TextBlock Text="{Binding TimeElapsed}" />
+                <TextBlock Text="{Binding Result}" />
               </StackPanel>
             </Border>
           </DataTemplate>

@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using System.Reflection;
 using System.Threading.Channels;
 using MemoryPack;
 using Shared;
@@ -126,9 +125,10 @@ public class SlaveClient
 
             if (_provider.TryGetExecutor(ass.AlgorithmName, out IAlgorithmExecutor? executor))
             {
-                await Task.Delay(TimeSpan.FromSeconds(2));
+                await Task.Delay(TimeSpan.FromSeconds(0.2));
                 byte[] v = executor.Execute(ass.Parameters);
-                AssignmentResult result = new AssignmentResult(ass.Id, MemoryPackSerializer.Serialize(v));
+                AssignmentResult result =
+                    new AssignmentResult(ass.Id, executor.ResultType, MemoryPackSerializer.Serialize(v));
                 byte[] payload = MemoryPackSerializer.Serialize(result);
                 ClientMessage response = new ClientMessage(ClientMessageType.Result, payload);
                 await _messages.Writer.WriteAsync(response);

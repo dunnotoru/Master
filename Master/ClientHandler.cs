@@ -12,7 +12,7 @@ public sealed class ClientHandler : IDisposable
 {
     private readonly Channel<Assignment> _asses;
     private readonly ChannelWriter<AssignmentResult> _results;
-    private readonly AlgorithmProvider _provider;
+    private readonly ModuleProvider _provider;
     private readonly Channel<ServerMessage> _messages;
 
     private readonly WebSocket _clientSocket;
@@ -27,7 +27,7 @@ public sealed class ClientHandler : IDisposable
         _pendingAssignments = new ConcurrentDictionary<AssignmentIdentifier, TaskCompletionSource<AssignmentResult>>();
 
     public ClientHandler(WebSocket clientSocket, int id, Channel<Assignment> asses,
-        ChannelWriter<AssignmentResult> results, AlgorithmProvider provider)
+        ChannelWriter<AssignmentResult> results, ModuleProvider provider)
     {
         _clientSocket = clientSocket;
         Id = id;
@@ -230,9 +230,9 @@ public sealed class ClientHandler : IDisposable
 
         //TODO: this is dummy
 
-        if (_provider.TryGetExecutor(name, out FileInfo? executor))
+        if (_provider.TryGetExecutor(name, out Module? module))
         {
-            byte[] file = await File.ReadAllBytesAsync(executor.FullName);
+            byte[] file = await File.ReadAllBytesAsync(module.ModuleFile.FullName);
             ServerMessage found = new ServerMessage(ServerMessageType.Algorithm,
                 MemoryPackSerializer.Serialize(new AlgorithmData(name, file)));
             await _messages.Writer.WriteAsync(found);

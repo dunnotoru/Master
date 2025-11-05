@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Shared;
 
 namespace Master;
 
@@ -12,34 +13,63 @@ public partial class MainViewModel : ObservableObject
     private readonly SynchronizationContext? _uiContext;
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SendJobCommand))]
-    private string? _substring = "";
+    [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
+    private string? _args = "";
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SendJobCommand))]
+    [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
     private string? _fileToOpen = "";
 
     public ObservableCollection<int> Clients { get; } = new ObservableCollection<int>();
-    public ObservableCollection<JobResult> Results { get; } = new ObservableCollection<JobResult>();
+    public ObservableCollection<JobViewModel> Results { get; } = new ObservableCollection<JobViewModel>();
+    public ObservableCollection<Module> Modules { get; } = new ObservableCollection<Module>();
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
+    private Module? _selectedModule;
+
+    private ModuleProvider _provider;
 
     public MainViewModel()
     {
         Debug.WriteLine("SERVER VIEWMODEL START");
-        AlgorithmProvider provider = new AlgorithmProvider();
-        _server = new MasterServer(provider);
+        _provider = new ModuleProvider();
+
+        _provider.ScanModules();
+        foreach (Module m in _provider.Modules.Values)
+        {
+            Modules.Add(m);
+        }
+
+        _server = new MasterServer(_provider);
         _server.SlaveConnected += ServerOnSlaveConnected;
         _server.SlaveDisconnected += ServerOnSlaveDisconnected;
         _server.JobDone += ServerOnJobDone;
-        Task.Run(() => _server.Start("http://localhost:5000/master/", CancellationToken.None));
-
         _uiContext = SynchronizationContext.Current;
+        Clients.CollectionChanged += (_, _) => EnqueueJobCommand.NotifyCanExecuteChanged();
 
-        Clients.CollectionChanged += (_, _) => SendJobCommand.NotifyCanExecuteChanged();
+        Task.Run(async () =>
+        {
+            try
+            {
+                await _server.RunAsync("http://localhost:5000/master/", CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Exception caught in viewmodel {0}", ex);
+            }
+        });
     }
 
-    private void ServerOnJobDone(JobResult obj)
+    private void ServerOnJobDone(Job job)
     {
-        _uiContext.Post(_ => Results.Add(obj), null);
+        string name = job.AlgorithmName;
+        if (_provider.TryGetExecutor(name, out Module? module))
+        {
+            object? r = module.Executor.AggregateResults(job.Results.ToList());
+            JobViewModel vm = new JobViewModel(job.Id, r.ToString(), TimeSpan.MaxValue);
+            _uiContext?.Post(_ => Results.Add(vm), null);
+        }
     }
 
     private void ServerOnSlaveDisconnected(int obj)
@@ -53,20 +83,21 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanSendJob))]
-    private async Task SendJobAsync()
+    private async Task EnqueueJob()
     {
+        IDictionary<string, string> dict = ArgsParser.Parse(_args);
+        dict["file"] = FileToOpen!;
+        List<Assignment> asses = SelectedModule!.Executor.CreateAssignments(dict, out Guid jobId);
+        Job job = new Job(jobId, SelectedModule!.Executor.Name, asses.Select(a => a.Id));
         Debug.WriteLine("SEND JOB {0}", [FileToOpen]);
-        await _server.AddJobAsync(await File.ReadAllTextAsync(FileToOpen), Substring);
+        await _server.EnqueueJobAsync(job, asses);
     }
 
     private bool CanSendJob()
     {
-        if (string.IsNullOrWhiteSpace(Substring))
-        {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(FileToOpen))
+        if (string.IsNullOrWhiteSpace(Args)
+            && string.IsNullOrWhiteSpace(FileToOpen)
+            && SelectedModule is null)
         {
             return false;
         }

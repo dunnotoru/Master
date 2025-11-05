@@ -22,26 +22,34 @@ public sealed class MasterServer : IDisposable
 
     public event Action<int>? SlaveConnected;
     public event Action<int>? SlaveDisconnected;
-    public event Action<JobResult>? JobDone;
+    public event Action<Job>? JobDone;
 
-    private readonly AlgorithmProvider _provider;
+    private readonly ModuleProvider _provider;
 
-    public MasterServer(AlgorithmProvider provider)
+    public MasterServer(ModuleProvider provider)
     {
         _provider = provider;
     }
 
-    public async Task Start(string listenerPrefix, CancellationToken cancellation)
+    public async Task RunAsync(string listenerPrefix, CancellationToken cancellation)
     {
-        _provider.ScanModules();
         HttpListener listener = new HttpListener();
         listener.Prefixes.Add(listenerPrefix);
         listener.Start();
 
-        Task result = ResultAssemblingLoopAsync(cancellation);
-        Task listen = ListenConnectionsLoopAsync(listener, cancellation);
+        Task first = await Task.WhenAny(
+            ResultAssemblingLoopAsync(cancellation),
+            ListenConnectionsLoopAsync(listener, cancellation)
+        );
 
-        await Task.WhenAll(result, listen);
+        try
+        {
+            await first;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+        }
     }
 
     private async Task ListenConnectionsLoopAsync(HttpListener listener, CancellationToken cancellation)
@@ -86,6 +94,7 @@ public sealed class MasterServer : IDisposable
 
         WebSocket clientSocket = webSocketContext.WebSocket;
         ClientHandler client = new ClientHandler(clientSocket, _count, _asses, _results.Writer, _provider);
+
         client.ConnectionClosed += ClientOnConnectionClosed;
         _ = client.WorkLoopAsync(cancellation);
 
@@ -103,15 +112,7 @@ public sealed class MasterServer : IDisposable
 
             if (_jobsInProgress.TryGetValue(result.Id.JobId, out Job? job))
             {
-                job.ReceivedResults.Add(result);
-                if (job.ReceivedResults.Count >= job.Total)
-                {
-                    Debug.WriteLine("JOB DONE {0}", job.ReceivedResults.Count);
-                    _jobsInProgress.Remove(result.Id.JobId, out _);
-                    job.Timer.Stop();
-                    JobDone?.Invoke(new JobResult(result.Id.JobId, job.Timer.Elapsed, 1));
-                    Debug.WriteLine(job.Timer.Elapsed.Seconds);
-                }
+                job.AddResult(result);
             }
             else
             {
@@ -131,29 +132,25 @@ public sealed class MasterServer : IDisposable
         }
     }
 
-    public async Task AddJobAsync(string text, string substring) //TODO: change to generic job
+    public async Task EnqueueJobAsync(Job job, List<Assignment> asses)
     {
-        Guid jobId = Guid.NewGuid();
-
-        List<char[]> chunks = text.Chunk(int.Min(1024 * 64, text.Length)).ToList();
-
-        Job job = new Job(chunks.Count);
-        job.Timer.Start();
-        _jobsInProgress[jobId] = job;
-
-        for (int i = 0; i < chunks.Count; i++)
+        foreach (Assignment ass in asses)
         {
-            AssignmentIdentifier id = new AssignmentIdentifier(jobId, i);
-            Assignment ass = new Assignment(id, chunks.Count, "count-substrings",
-                new Dictionary<string, byte[]>
-                {
-                    ["text"] = MemoryPackSerializer.Serialize(new string(chunks[i])),
-                    ["substring"] = MemoryPackSerializer.Serialize(substring)
-                }
-            );
-
             await _asses.Writer.WriteAsync(ass);
         }
+
+        job.JobDone += OnJobDone;
+        _jobsInProgress[job.Id] = job;
+    }
+
+    private void OnJobDone(Job result)
+    {
+        if (_jobsInProgress.TryRemove(result.Id, out Job? job))
+        {
+            job.JobDone -= OnJobDone;
+        }
+
+        JobDone?.Invoke(result);
     }
 
     public void Dispose()
