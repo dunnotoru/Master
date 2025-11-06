@@ -1,4 +1,7 @@
-﻿using System.Windows;
+﻿using System.ComponentModel;
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 
 namespace Master;
@@ -14,16 +17,8 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
     }
 
-    private void ButtonBase_OnClick(object sender, RoutedEventArgs e)
+    private void MainWindow_OnClosing(object? sender, CancelEventArgs e)
     {
-        OpenFileDialog fileDialog = new OpenFileDialog();
-        bool res = fileDialog.ShowDialog() ?? false;
-        if (!res)
-        {
-            return;
-        }
-
-        string file = fileDialog.FileName;
-        _viewModel.FileToOpen = file;
+        throw new NotImplementedException();
     }
 }

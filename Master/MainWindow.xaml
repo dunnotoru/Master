@@ -4,9 +4,12 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Master"
+        xmlns:ff="clr-namespace:Master.FormFields"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance local:MainViewModel}"
-        Title="MainWindow" Height="450" Width="800">
+        Title="MainWindow" Height="450" Width="800"
+        Closing="MainWindow_OnClosing"
+        >
   <Window.Resources>
     <Style TargetType="TextBlock">
       <Setter Property="FontFamily" Value="Comic Sans MS" />
@@ -24,6 +27,19 @@
       <Setter Property="FontFamily" Value="Comic Sans MS" />
       <Setter Property="FontWeight" Value="ExtraBold" />
     </Style>
+    <DataTemplate DataType="{x:Type ff:TextField}">
+      <StackPanel>
+        <Label Content="{Binding LabelText}" />
+        <TextBox Text="{Binding Value}" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate DataType="{x:Type ff:FileField}">
+      <StackPanel>
+        <Label Content="{Binding LabelText}" />
+        <Button Content="Select" Command="{Binding SelectFileCommand}" />
+        <TextBlock Text="{Binding Value}" FontSize="10" />
+      </StackPanel>
+    </DataTemplate>
   </Window.Resources>
   <DockPanel>
     <StackPanel DockPanel.Dock="Right">
@@ -41,15 +57,9 @@
           </DataTemplate>
         </ListView.ItemTemplate>
       </ListView>
-      <TextBlock Text="{Binding FileToOpen}" />
-      <Button Click="ButtonBase_OnClick"
-              Margin="10"
-              Padding="5 2"
-              Content="ВЫБРАТЬ ДОКУМЕНТИК (*.txt)" />
-      <TextBlock Text="СХЕМКА АРГУМЕНТИКОВ:" />
-      <TextBlock Text="{Binding SelectedModule.Executor.ArgsSchema}" />
-      <Label Content="АРГУМЕНТИКИ БУДУТ?" />
-      <TextBox Text="{Binding Args}" />
+      <ItemsControl ItemsSource="{Binding Fields}">
+
+      </ItemsControl>
       <Button Command="{Binding EnqueueJobCommand}"
               Margin="10"
               Padding="5 2"
@@ -65,7 +75,9 @@
         <ListView ItemsSource="{Binding Clients}">
           <ListView.ItemTemplate>
             <DataTemplate>
-              <TextBlock Text="{Binding StringFormat=КЛИЕНТУРА N.{0}}" />
+              <DockPanel>
+                <TextBlock Text="{Binding StringFormat=КЛИЕНТУРА N.{0}}" />
+              </DockPanel>
             </DataTemplate>
           </ListView.ItemTemplate>
         </ListView>

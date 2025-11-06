@@ -3,32 +3,27 @@ using System.Diagnostics;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Master.FormFields;
 using Shared;
 
 namespace Master;
 
-public partial class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly MasterServer _server;
     private readonly SynchronizationContext? _uiContext;
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
-    private string? _args = "";
-
-    [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
-    private string? _fileToOpen = "";
 
     public ObservableCollection<int> Clients { get; } = new ObservableCollection<int>();
     public ObservableCollection<JobViewModel> Results { get; } = new ObservableCollection<JobViewModel>();
     public ObservableCollection<Module> Modules { get; } = new ObservableCollection<Module>();
 
+    public ObservableCollection<FormField> Fields { get; } = new ObservableCollection<FormField>();
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
     private Module? _selectedModule;
 
-    private ModuleProvider _provider;
+    private readonly ModuleProvider _provider;
 
     public MainViewModel()
     {
@@ -61,6 +56,29 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
+    partial void OnSelectedModuleChanged(Module? value)
+    {
+        if (value is null)
+        {
+            Fields.Clear();
+            return;
+        }
+
+        Fields.Clear();
+
+        foreach ((string k, string v) in value.Executor.Schema)
+        {
+            if (string.Equals(v, "text"))
+            {
+                Fields.Add(new TextField(k));
+            }
+            else if (v.StartsWith("file/"))
+            {
+                Fields.Add(new FileField(k));
+            }
+        }
+    }
+
     private void ServerOnJobDone(Job job)
     {
         string name = job.AlgorithmName;
@@ -82,26 +100,28 @@ public partial class MainViewModel : ObservableObject
         _uiContext?.Post(_ => Clients.Add(obj), null);
     }
 
-    [RelayCommand(CanExecute = nameof(CanSendJob))]
+    [RelayCommand]
     private async Task EnqueueJob()
     {
-        IDictionary<string, string> dict = ArgsParser.Parse(_args);
-        dict["file"] = FileToOpen!;
+        if (Fields.Any(f => !f.Validate(out _)))
+        {
+            return;
+        }
+        
+        IDictionary<string, string> dict = new Dictionary<string, string>();
+        foreach (FormField f in Fields)
+        {
+            dict[f.LabelText] = f.Value!;
+        }
+
         List<Assignment> asses = SelectedModule!.Executor.CreateAssignments(dict, out Guid jobId);
         Job job = new Job(jobId, SelectedModule!.Executor.Name, asses.Select(a => a.Id));
-        Debug.WriteLine("SEND JOB {0}", [FileToOpen]);
+        Debug.WriteLine("SEND JOB");
         await _server.EnqueueJobAsync(job, asses);
     }
 
-    private bool CanSendJob()
+    public void Dispose()
     {
-        if (string.IsNullOrWhiteSpace(Args)
-            && string.IsNullOrWhiteSpace(FileToOpen)
-            && SelectedModule is null)
-        {
-            return false;
-        }
-
-        return true;
+        _server.Dispose();
     }
 }

@@ -10,6 +10,11 @@ public class CountSubstringsExecutor : IAlgorithmExecutor
     public Type ResultType { get; } = typeof(int);
     public string ArgsSchema { get; } = "substring=string-value";
 
+    public IDictionary<string, string> Schema { get; } = new Dictionary<string, string>()
+    {
+        ["substring"] = "text",
+        ["file"] = "file/*.txt",
+    };
 
     public byte[] Execute(IDictionary<string, byte[]> parameters)
     {

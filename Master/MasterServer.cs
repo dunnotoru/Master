@@ -152,6 +152,8 @@ public sealed class MasterServer : IDisposable
 
         JobDone?.Invoke(result);
     }
+    
+    public async Task Stop()
 
     public void Dispose()
     {
