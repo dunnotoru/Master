@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using MemoryPack;
+﻿using MemoryPack;
 using Shared;
 
 namespace CountSubstrings;
@@ -7,9 +6,8 @@ namespace CountSubstrings;
 public class CountSubstringsExecutor : IAlgorithmExecutor
 {
     public Guid Id { get; } = Guid.Parse("1402cb38-e195-4781-a708-4ec769a17d76");
-    public string Name { get; } = "count-substrings";
+    public string Name { get; } = "count-substrings-art";
     public Type ResultType { get; } = typeof(int);
-    public string ArgsSchema { get; } = "substring=string-value";
 
     public IDictionary<string, string> Schema { get; } = new Dictionary<string, string>()
     {
@@ -23,7 +21,9 @@ public class CountSubstringsExecutor : IAlgorithmExecutor
         string substring = MemoryPackSerializer.Deserialize<string>(parameters["substring"])!;
 
         Console.WriteLine("Executing {0}", Name);
-        Console.WriteLine("Parameters are {0} {1}", text, substring);
+        // Console.WriteLine("Parameters are {0} {1}", text, substring);
+        
+        Thread.Sleep(TimeSpan.FromSeconds(5));
 
         int result = FindSubstrings(text, substring);
         Console.WriteLine("Return Value is {0}", result);

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -62,24 +63,42 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedModuleChanged(Module? value)
     {
-        if (value is null)
+        foreach (FormField f in Fields)
         {
-            Fields.Clear();
-            return;
+            f.PropertyChanged -= FieldOnPropertyChanged;
         }
 
         Fields.Clear();
 
+        if (value is null)
+        {
+            return;
+        }
+
         foreach ((string k, string v) in value.Executor.Schema)
         {
-            if (string.Equals(v, "text"))
+            FormField field;
+            if (v.StartsWith("file/"))
             {
-                Fields.Add(new TextField(k));
+                field = new FileField(k);
+                field.PropertyChanged += FieldOnPropertyChanged;
             }
-            else if (v.StartsWith("file/"))
+            else
             {
-                Fields.Add(new FileField(k));
+                field = new TextField(k);
+                field.PropertyChanged += FieldOnPropertyChanged;
             }
+
+            Fields.Add(field);
+        }
+    }
+
+    private void FieldOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FormField.Value))
+        {
+            EnqueueJobCommand.NotifyCanExecuteChanged();
+            DoWorkCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -90,7 +109,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             object? r = module.Executor.AggregateResults(job.Results.ToList());
             Debug.Print(r?.ToString());
-            JobViewModel vm = new JobViewModel(job.Id, r?.ToString(), job.Elapsed);
+            string val = r?.ToString();
+            if (_serverWork)
+            {
+                val = $"Работа выполнена на сервере, результат {val}";
+            }
+            else
+            {
+                val = $"Работа выполнена удаленно, результат {val}";
+            }
+
+            _serverWork = false;
+
+            JobViewModel vm = new JobViewModel(job.Id, val, job.Elapsed);
             _uiContext?.Post(_ => Results.Add(vm), null);
         }
     }
@@ -105,7 +136,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _uiContext?.Post(_ => Clients.Add(obj), null);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanEnqueueJob))]
     private async Task EnqueueJob()
     {
         if (Fields.Any(f => !f.Validate(out _)))
@@ -123,7 +154,60 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Job job = new Job(jobId, SelectedModule!.Executor.Name, asses.Select(a => a.Id));
         Debug.WriteLine("SEND JOB");
         await _server.EnqueueJobAsync(job, asses);
+    }
+
+    private bool _serverWork = false;
+
+    [RelayCommand(CanExecute = nameof(CanSubmitJob))]
+    private void DoWork()
+    {
+        if (Fields.Any(f => !f.Validate(out _)))
+        {
+            return;
         }
+
+        IDictionary<string, string> dict = new Dictionary<string, string>();
+        foreach (FormField f in Fields)
+        {
+            dict[f.LabelText] = f.Value!;
+        }
+
+        _serverWork = true;
+
+        IAlgorithmExecutor executor = SelectedModule!.Executor;
+
+        List<Assignment> asses = executor.CreateAssignments(dict, out Guid jobId);
+        Job job = new Job(jobId, executor.Name, asses.Select(a => a.Id));
+
+        job.JobDone += ServerOnJobDone;
+
+        foreach (Assignment ass in asses)
+        {
+            byte[] result = executor.Execute(ass.Parameters);
+            job.AddResult(new AssignmentResult(ass.Id, executor.ResultType, result));
+        }
+    }
+
+    private bool CanSubmitJob()
+    {
+        if (SelectedModule is null)
+        {
+            return false;
+        }
+
+        return Fields.All(f => f.Validate(out _));
+    }
+
+    private bool CanEnqueueJob()
+    {
+        if (SelectedModule is null ||
+            Clients.Count == 0)
+        {
+            return false;
+        }
+
+        return Fields.All(f => f.Validate(out _));
+    }
 
     public void Dispose()
     {

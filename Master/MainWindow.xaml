@@ -8,8 +8,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance local:MainViewModel}"
         Title="MainWindow" Height="450" Width="800"
-        Closing="MainWindow_OnClosing"
-        >
+        Closing="MainWindow_OnClosing">
   <Window.Resources>
     <Style TargetType="TextBlock">
       <Setter Property="FontFamily" Value="Comic Sans MS" />
@@ -43,11 +42,12 @@
   </Window.Resources>
   <DockPanel>
     <StackPanel DockPanel.Dock="Right">
+      <Label Content="Доступные Алгоритмы:" Margin="10" />
       <ListView ItemsSource="{Binding Modules}"
                 SelectedItem="{Binding SelectedModule}"
                 SelectionMode="Single"
                 MaxWidth="500"
-                Margin="10" MinHeight="100">
+                Margin="5" MinHeight="100">
         <ListView.ItemTemplate>
           <DataTemplate>
             <StackPanel>
@@ -57,26 +57,25 @@
           </DataTemplate>
         </ListView.ItemTemplate>
       </ListView>
-      <ItemsControl ItemsSource="{Binding Fields}">
-
-      </ItemsControl>
+      <Label Content="Параметры:" Margin="10" />
+      <ItemsControl ItemsSource="{Binding Fields}" />
       <Button Command="{Binding EnqueueJobCommand}"
               Margin="10"
               Padding="5 2"
-              Content="ОБКАШЛЯТЬ С КЛИЕНТИКАМИ" />
-      <Button Command="{Binding }"
+              Content="Распределить Работу" />
+      <Button Command="{Binding DoWorkCommand}"
               Margin="10"
               Padding="5 2 "
-              Content="ПОРЕШАТЬ ВОПРОСИК САМОМУ" />
+              Content="Выполнить Работу На Сервере" />
     </StackPanel>
     <Grid DockPanel.Dock="Left">
       <DockPanel HorizontalAlignment="Left" MinWidth="100">
-        <TextBlock DockPanel.Dock="Top" Margin="10">КЛИЕНТУРА</TextBlock>
-        <ListView ItemsSource="{Binding Clients}">
+        <Label DockPanel.Dock="Top" Margin="10" Content="Клиенты" />
+        <ListView ItemsSource="{Binding Clients}" Margin="5">
           <ListView.ItemTemplate>
             <DataTemplate>
               <DockPanel>
-                <TextBlock Text="{Binding StringFormat=КЛИЕНТУРА N.{0}}" />
+                <TextBlock Text="{Binding StringFormat=Клиент N.{0}}" />
               </DockPanel>
             </DataTemplate>
           </ListView.ItemTemplate>
@@ -84,8 +83,8 @@
       </DockPanel>
     </Grid>
     <DockPanel>
-      <TextBlock DockPanel.Dock="Top" HorizontalAlignment="Center">РЕЗУЛЬТАТЫ</TextBlock>
-      <ListView ItemsSource="{Binding Results}" BorderBrush="Black" Margin="10" BorderThickness="5">
+      <Label DockPanel.Dock="Top" HorizontalAlignment="Center" Margin="10" Content="Результаты работы" />
+      <ListView ItemsSource="{Binding Results}" BorderBrush="Black" Margin="5" BorderThickness="5">
         <ListView.ItemTemplate>
           <DataTemplate>
             <Border BorderBrush="Red" BorderThickness="3">

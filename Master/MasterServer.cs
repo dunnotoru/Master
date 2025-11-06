@@ -44,8 +44,8 @@ public sealed class MasterServer : IDisposable
 
         try
         {
-            await first;
             listener.Stop();
+            await first;
         }
         catch (Exception ex)
         {
