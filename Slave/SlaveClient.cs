@@ -148,7 +148,6 @@ public class SlaveClient
         }
     }
 
-
     private async Task<ServerMessage?> ReceiveMessageAsync(byte[] buffer)
     {
         using MemoryStream ms = new MemoryStream();

@@ -28,15 +28,15 @@
     </Style>
     <DataTemplate DataType="{x:Type ff:TextField}">
       <StackPanel>
-        <Label Content="{Binding LabelText}" />
-        <TextBox Text="{Binding Value}" />
+        <Label Content="{Binding LabelText}" Margin="10 0" />
+        <TextBox Text="{Binding Value}" Margin="10 0" />
       </StackPanel>
     </DataTemplate>
     <DataTemplate DataType="{x:Type ff:FileField}">
       <StackPanel>
-        <Label Content="{Binding LabelText}" />
-        <Button Content="Select" Command="{Binding SelectFileCommand}" />
-        <TextBlock Text="{Binding Value}" FontSize="10" />
+        <Label Content="{Binding LabelText}" Margin="10 0" />
+        <Button Content="Выбрать Файл" Command="{Binding SelectFileCommand}" Margin="10 0" />
+        <TextBlock Text="{Binding Value}" FontSize="10" Margin="10 0" />
       </StackPanel>
     </DataTemplate>
   </Window.Resources>

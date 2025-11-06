@@ -9,7 +9,26 @@ internal static class Program
         {
             try
             {
-                await Run();
+                using StreamReader propsFile = File.OpenText("./application.properties");
+                string? line = await propsFile.ReadLineAsync();
+                if (line is null)
+                {
+                    throw new ArgumentNullException(nameof(line), "connection-string was null");
+                }
+
+                string[] kv = line.Split('=', 2);
+                string k = kv[0];
+                string v = kv[1];
+
+                if ("connection-string".Equals(k))
+                {
+                    await Run(new Uri(v));
+                }
+                else
+                {
+                    return;
+                }
+
             }
             catch (Exception e)
             {
@@ -25,13 +44,13 @@ internal static class Program
         } while (run);
     }
 
-    private static async Task Run()
+    private static async Task Run(Uri connectionUri)
     {
         AlgorithmProvider provider = new AlgorithmProvider();
         CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         CancellationTokenSource workCts = new CancellationTokenSource();
         SlaveClient client = new SlaveClient(provider);
-        Task connection = client.Connect(new Uri("ws://localhost:5000/master"), cts.Token, workCts.Token);
+        Task connection = client.Connect(connectionUri, cts.Token, workCts.Token);
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
         await cts.CancelAsync();

@@ -52,7 +52,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             try
             {
-                await _server.RunAsync("http://localhost:5000/master/", serverCts.Token);
+                await _server.RunAsync("http://+:5000/master/", serverCts.Token);
             }
             catch (Exception ex)
             {
