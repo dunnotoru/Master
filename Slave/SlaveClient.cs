@@ -13,6 +13,8 @@ public class SlaveClient
     private readonly ClientWebSocket _clientSocket;
     private readonly AlgorithmProvider _provider;
 
+    private readonly Channel<ClientMessage> _messages = Channel.CreateUnbounded<ClientMessage>();
+
     public SlaveClient(AlgorithmProvider provider)
     {
         _provider = provider;
@@ -49,8 +51,6 @@ public class SlaveClient
         }
     }
 
-    private readonly Channel<ClientMessage> _messages = Channel.CreateUnbounded<ClientMessage>();
-
     private async Task SendLoopAsync(CancellationToken cancellation)
     {
         while (await _messages.Reader.WaitToReadAsync(cancellation))
@@ -76,28 +76,6 @@ public class SlaveClient
         }
     }
 
-    private async Task<ServerMessage?> ReceiveMessageAsync(byte[] buffer)
-    {
-        using MemoryStream ms = new MemoryStream();
-        WebSocketReceiveResult result;
-        do
-        {
-            result =
-                await _clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-            if (result.MessageType == WebSocketMessageType.Close)
-            {
-                await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure",
-                    CancellationToken.None);
-                Console.WriteLine("Closed Normal Closure");
-                return null;
-            }
-
-            ms.Write(buffer, 0, result.Count);
-        } while (!result.EndOfMessage);
-
-        return MemoryPackSerializer.Deserialize<ServerMessage>(ms.ToArray());
-    }
 
     private async Task HandleMessage(ServerMessage message)
     {
@@ -115,10 +93,10 @@ public class SlaveClient
 
             if (_provider.TryGetExecutor(ass.AlgorithmName, out IAlgorithmExecutor? executor))
             {
-                await Task.Delay(TimeSpan.FromSeconds(0.2));
+                // await Task.Delay(TimeSpan.FromSeconds(0.2));
                 byte[] v = executor.Execute(ass.Parameters);
                 AssignmentResult result =
-                    new AssignmentResult(ass.Id, executor.ResultType, MemoryPackSerializer.Serialize(v));
+                    new AssignmentResult(ass.Id, executor.ResultType, v);
                 byte[] payload = MemoryPackSerializer.Serialize(result);
                 ClientMessage response = new ClientMessage(ClientMessageType.Result, payload);
                 await _messages.Writer.WriteAsync(response);
@@ -168,5 +146,29 @@ public class SlaveClient
 
             offset += size;
         }
+    }
+
+
+    private async Task<ServerMessage?> ReceiveMessageAsync(byte[] buffer)
+    {
+        using MemoryStream ms = new MemoryStream();
+        WebSocketReceiveResult result;
+        do
+        {
+            result =
+                await _clientSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "NormalClosure",
+                    CancellationToken.None);
+                Console.WriteLine("Closed Normal Closure");
+                return null;
+            }
+
+            ms.Write(buffer, 0, result.Count);
+        } while (!result.EndOfMessage);
+
+        return MemoryPackSerializer.Deserialize<ServerMessage>(ms.ToArray());
     }
 }

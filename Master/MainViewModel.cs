@@ -26,7 +26,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private CancellationTokenSource serverCts;
     private Task serverRun;
 
-
     private readonly ModuleProvider _provider;
 
     public MainViewModel()
@@ -90,7 +89,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (_provider.TryGetExecutor(name, out Module? module))
         {
             object? r = module.Executor.AggregateResults(job.Results.ToList());
-            JobViewModel vm = new JobViewModel(job.Id, r.ToString(), TimeSpan.MaxValue);
+            Debug.Print(r?.ToString());
+            JobViewModel vm = new JobViewModel(job.Id, r?.ToString(), job.Elapsed);
             _uiContext?.Post(_ => Results.Add(vm), null);
         }
     }
@@ -123,7 +123,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Job job = new Job(jobId, SelectedModule!.Executor.Name, asses.Select(a => a.Id));
         Debug.WriteLine("SEND JOB");
         await _server.EnqueueJobAsync(job, asses);
-    }
+        }
 
     public void Dispose()
     {

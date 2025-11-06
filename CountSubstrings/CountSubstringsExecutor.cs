@@ -1,4 +1,5 @@
-﻿using MemoryPack;
+﻿using System.Diagnostics;
+using MemoryPack;
 using Shared;
 
 namespace CountSubstrings;
@@ -22,10 +23,10 @@ public class CountSubstringsExecutor : IAlgorithmExecutor
         string substring = MemoryPackSerializer.Deserialize<string>(parameters["substring"])!;
 
         Console.WriteLine("Executing {0}", Name);
-        Console.WriteLine("Parameters are {0}", string.Join(", ", parameters));
+        Console.WriteLine("Parameters are {0} {1}", text, substring);
 
         int result = FindSubstrings(text, substring);
-        Console.WriteLine("Return Value is {1}", result);
+        Console.WriteLine("Return Value is {0}", result);
 
         return MemoryPackSerializer.Serialize(result);
     }
@@ -65,6 +66,7 @@ public class CountSubstringsExecutor : IAlgorithmExecutor
         foreach (AssignmentResult result in results)
         {
             int value = MemoryPackSerializer.Deserialize<int>(result.Result);
+            Console.WriteLine("Aggregating value is {0}", value);
             sum += value;
         }
 
