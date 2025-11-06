@@ -37,21 +37,29 @@ public sealed class ClientHandler : IDisposable
         _messages = Channel.CreateUnbounded<ServerMessage>();
     }
 
-    private async Task SendMessageAsync(ServerMessage message)
+    public async Task WorkLoopAsync(CancellationToken cancellation)
     {
-        byte[] data = MemoryPackSerializer.Serialize(message);
-
-        int offset = 0;
-
-        while (offset < data.Length)
+        try
         {
-            int size = Math.Min(ChunkSize, data.Length - offset);
-            bool endOfMessage = offset + size >= data.Length;
+            Task send = SendLoopAsync(cancellation);
+            Task listen = ReceiveLoopAsync(cancellation);
+            await Task.WhenAny(send, listen);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
+                CancellationToken.None);
+        }
+        finally
+        {
+            foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
+            {
+                pending.TrySetCanceled(CancellationToken.None);
+            }
 
-            ArraySegment<byte> segment = new ArraySegment<byte>(data, offset, size);
-            await _clientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
-
-            offset += size;
+            _pendingAssignments.Clear();
+            ConnectionClosed?.Invoke(this);
         }
     }
 
@@ -98,33 +106,25 @@ public sealed class ClientHandler : IDisposable
         }
     }
 
-    public async Task WorkLoopAsync(CancellationToken cancellation)
+    
+
+    private async Task SendMessageAsync(ServerMessage message)
     {
-        try
-        {
-            Task send = SendLoopAsync(cancellation);
-            Task listen = ReceiveLoopAsync(cancellation);
+        byte[] data = MemoryPackSerializer.Serialize(message);
 
-            await Task.WhenAll(send, listen);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine(ex);
-            await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
-                CancellationToken.None);
-        }
-        finally
-        {
-            foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
-            {
-                pending.TrySetCanceled(CancellationToken.None);
-            }
+        int offset = 0;
 
-            _pendingAssignments.Clear();
-            ConnectionClosed?.Invoke(this);
+        while (offset < data.Length)
+        {
+            int size = Math.Min(ChunkSize, data.Length - offset);
+            bool endOfMessage = offset + size >= data.Length;
+
+            ArraySegment<byte> segment = new ArraySegment<byte>(data, offset, size);
+            await _clientSocket.SendAsync(segment, WebSocketMessageType.Binary, endOfMessage, CancellationToken.None);
+
+            offset += size;
         }
     }
-
 
     private async Task<ClientMessage?> ReceiveMessage(byte[] buffer, CancellationToken cancellation)
     {
@@ -197,7 +197,7 @@ public sealed class ClientHandler : IDisposable
         catch (TaskCanceledException ex)
         {
             await _asses.Writer.WriteAsync(assignment);
-            Debug.WriteLine(ex);
+            Debug.WriteLine("Assignment wasn't processed, {0}", ex);
         }
         catch (Exception ex)
         {

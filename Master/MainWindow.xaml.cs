@@ -19,6 +19,6 @@ public partial class MainWindow : Window
 
     private void MainWindow_OnClosing(object? sender, CancelEventArgs e)
     {
-        throw new NotImplementedException();
+        _viewModel.Dispose();
     }
 }

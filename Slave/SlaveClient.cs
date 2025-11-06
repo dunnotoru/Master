@@ -19,18 +19,24 @@ public class SlaveClient
         _clientSocket = new ClientWebSocket();
     }
 
-    public async Task Connect(Uri uri, CancellationToken cancellation)
+    public async Task Connect(Uri uri, CancellationToken connectCancellation, CancellationToken cancellation)
     {
         Console.WriteLine("Trying To Connect To {0}", uri);
-        await _clientSocket.ConnectAsync(uri, cancellation);
+        await _clientSocket.ConnectAsync(uri, connectCancellation);
         Console.WriteLine("Success");
 
         try
         {
-            CancellationTokenSource tcs = new CancellationTokenSource();
-            Task send = SendLoopAsync(tcs.Token);
-            Task receive = ReceiveLoopAsync(tcs.Token);
-            await Task.WhenAny(send, receive);
+            Task send = SendLoopAsync(cancellation);
+            Task receive = ReceiveLoopAsync(cancellation);
+            Task first = await Task.WhenAny(send, receive);
+            await first;
+        }
+        catch (OperationCanceledException)
+        {
+            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
+                CancellationToken.None);
+            Console.WriteLine("Keyboard interrupt");
         }
         catch (Exception e)
         {
@@ -47,42 +53,26 @@ public class SlaveClient
 
     private async Task SendLoopAsync(CancellationToken cancellation)
     {
-        try
+        while (await _messages.Reader.WaitToReadAsync(cancellation))
         {
-            while (await _messages.Reader.WaitToReadAsync(cancellation))
-            {
-                ClientMessage msg = await _messages.Reader.ReadAsync(cancellation);
-                await SendMessageAsync(msg);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(ex);
-            throw;
+            ClientMessage msg = await _messages.Reader.ReadAsync(cancellation);
+            await SendMessageAsync(msg);
         }
     }
 
     private async Task ReceiveLoopAsync(CancellationToken cancellation)
     {
-        try
+        byte[] buffer = new byte[BufferSize];
+        ClientMessage request = new ClientMessage(ClientMessageType.AssignmentRequest, Array.Empty<byte>());
+        await _messages.Writer.WriteAsync(request, cancellation);
+        while (_clientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
         {
-            byte[] buffer = new byte[BufferSize];
-            ClientMessage request = new ClientMessage(ClientMessageType.AssignmentRequest, Array.Empty<byte>());
-            await _messages.Writer.WriteAsync(request, cancellation);
-            while (_clientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
-            {
-                ServerMessage? message = await ReceiveMessageAsync(buffer);
+            ServerMessage? message = await ReceiveMessageAsync(buffer);
 
-                if (message is not null)
-                {
-                    await HandleMessage(message);
-                }
+            if (message is not null)
+            {
+                await HandleMessage(message);
             }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(ex);
-            throw;
         }
     }
 

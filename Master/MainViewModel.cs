@@ -23,6 +23,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(EnqueueJobCommand))]
     private Module? _selectedModule;
 
+    private CancellationTokenSource serverCts;
+    private Task serverRun;
+
+
     private readonly ModuleProvider _provider;
 
     public MainViewModel()
@@ -43,11 +47,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _uiContext = SynchronizationContext.Current;
         Clients.CollectionChanged += (_, _) => EnqueueJobCommand.NotifyCanExecuteChanged();
 
-        Task.Run(async () =>
+        serverCts = new CancellationTokenSource();
+        serverRun = Task.Run(async () =>
         {
             try
             {
-                await _server.RunAsync("http://localhost:5000/master/", CancellationToken.None);
+                await _server.RunAsync("http://localhost:5000/master/", serverCts.Token);
             }
             catch (Exception ex)
             {
@@ -107,7 +112,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             return;
         }
-        
+
         IDictionary<string, string> dict = new Dictionary<string, string>();
         foreach (FormField f in Fields)
         {
@@ -122,6 +127,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        serverCts.Cancel();
         _server.Dispose();
     }
 }

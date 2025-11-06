@@ -29,11 +29,13 @@ internal static class Program
     {
         AlgorithmProvider provider = new AlgorithmProvider();
         CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        CancellationTokenSource workCts = new CancellationTokenSource();
         SlaveClient client = new SlaveClient(provider);
-        Task connection = client.Connect(new Uri("ws://localhost:5000/master"), cts.Token);
+        Task connection = client.Connect(new Uri("ws://localhost:5000/master"), cts.Token, workCts.Token);
         Console.WriteLine("Press any key to exit...");
         Console.ReadKey();
         await cts.CancelAsync();
+        await workCts.CancelAsync();
         await connection;
     }
 }

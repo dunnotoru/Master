@@ -45,6 +45,7 @@ public sealed class MasterServer : IDisposable
         try
         {
             await first;
+            listener.Stop();
         }
         catch (Exception ex)
         {
@@ -128,6 +129,7 @@ public sealed class MasterServer : IDisposable
         if (_connectedClients.TryRemove(clientHandler, out _))
         {
             clientHandler.ConnectionClosed -= ClientOnConnectionClosed;
+            clientHandler.Dispose();
             SlaveDisconnected?.Invoke(clientHandler.Id);
         }
     }
@@ -152,8 +154,6 @@ public sealed class MasterServer : IDisposable
 
         JobDone?.Invoke(result);
     }
-    
-    public async Task Stop()
 
     public void Dispose()
     {
