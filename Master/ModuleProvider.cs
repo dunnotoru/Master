@@ -9,8 +9,8 @@ namespace Master;
 
 public class ModuleProvider
 {
-    public string ModuleDirectory { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lab", "MasterModules");
+    public string ModuleDirectory { get; } =  
+        Path.Combine(Environment.CurrentDirectory, "MasterModules");
 
     private Dictionary<string, Module> _modules = new Dictionary<string, Module>();
     public FrozenDictionary<string, Module> Modules => _modules.ToFrozenDictionary();

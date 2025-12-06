@@ -1,4 +1,6 @@
-﻿namespace Slave;
+﻿using System.Net;
+
+namespace Slave;
 
 internal static class Program
 {
@@ -9,35 +11,28 @@ internal static class Program
         {
             try
             {
-                using StreamReader propsFile = File.OpenText("./application.properties");
-                string? line = await propsFile.ReadLineAsync();
-                if (line is null)
+                Console.Write("Подключиться к ip: ");
+                string? ipString = Console.ReadLine();
+                if (!IPAddress.TryParse(ipString ?? "", out IPAddress? ip))
                 {
-                    throw new ArgumentNullException(nameof(line), "connection-string was null");
-                }
+                    ip = IPAddress.Loopback;
+                };
+                
+                Console.Write("Порт: ");
+                string? portString = Console.ReadLine();
+                int port = int.Parse(portString ?? "");
 
-                string[] kv = line.Split('=', 2);
-                string k = kv[0];
-                string v = kv[1];
-
-                if ("connection-string".Equals(k))
-                {
-                    await Run(new Uri(v));
-                }
-                else
-                {
-                    return;
-                }
-
+                UriBuilder builder = new UriBuilder("ws", ip.ToString(), port, "master");
+                await Run(builder.Uri);
             }
             catch (Exception e)
             {
-                Console.WriteLine("An error occured during execution {0}", e);
+                Console.WriteLine("Произошла ошибка {0}", e);
             }
 
-            Console.WriteLine("Try To Reconnect? [Y/N]");
-            ConsoleKeyInfo key = Console.ReadKey();
-            if (key.Key == ConsoleKey.N)
+            Console.WriteLine("Повторить попытку подключения? [Д/Н]");
+            ConsoleKeyInfo key = Console.ReadKey(true);
+            if (key.Key is ConsoleKey.N or ConsoleKey.Y)
             {
                 run = false;
             }
@@ -47,13 +42,10 @@ internal static class Program
     private static async Task Run(Uri connectionUri)
     {
         AlgorithmProvider provider = new AlgorithmProvider();
-        CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         CancellationTokenSource workCts = new CancellationTokenSource();
         SlaveClient client = new SlaveClient(provider);
-        Task connection = client.Connect(connectionUri, cts.Token, workCts.Token);
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
-        await cts.CancelAsync();
+        Task connection = client.Connect(connectionUri, workCts.Token);
+        Console.ReadKey(true);
         await workCts.CancelAsync();
         await connection;
     }

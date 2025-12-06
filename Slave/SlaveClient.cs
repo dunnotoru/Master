@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Threading.Channels;
 using MemoryPack;
@@ -21,22 +22,43 @@ public class SlaveClient
         _clientSocket = new ClientWebSocket();
     }
 
-    public async Task Connect(Uri uri, CancellationToken connectCancellation, CancellationToken cancellation)
+    public async Task Connect(Uri uri, CancellationToken cancellation)
     {
-        Console.WriteLine("Trying To Connect To {0}", uri);
-        await _clientSocket.ConnectAsync(uri, connectCancellation);
-        Console.WriteLine("Success");
+        Console.WriteLine("Подключение... {0}", uri);
+
+        Task connect = _clientSocket.ConnectAsync(uri, cancellation);
+        Task timeout = Task.Delay(TimeSpan.FromSeconds(5), cancellation);
+        if (await Task.WhenAny(connect, timeout) != connect)
+        {
+            if (cancellation.IsCancellationRequested)
+            {
+                Console.WriteLine("Запрос на подключение был отменен пользователем");
+            }
+            else
+            {
+                Console.WriteLine("Удаленный хост недоступен (превышено время ожидания)");
+            }
+
+            return;
+        }
+        
+        try
+        {
+            await connect;
+            Console.WriteLine("Успешно");
+        }
+        catch (WebSocketException e)
+        {
+            Console.WriteLine("Конечный хост отверг запрос на подключение");
+            Debug.WriteLine(e);
+            return;
+        }
+
 
         Task first = await Task.WhenAny(
             SendLoopAsync(cancellation),
             ReceiveLoopAsync(cancellation)
         );
-
-        AppDomain.CurrentDomain.ProcessExit += async (sender, args) =>
-        {
-            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
-                CancellationToken.None);
-        };
 
         try
         {
@@ -44,17 +66,21 @@ public class SlaveClient
         }
         catch (OperationCanceledException)
         {
-            Console.WriteLine("Keyboard interrupt");
+            Console.WriteLine("Ввод с клавиатуры, остановка");
         }
         catch (Exception e)
         {
-            await Console.Error.WriteLineAsync("Fail (Caught in Connection)");
-            Console.Error.WriteLine(e);
+            Console.WriteLine("Произошла Ошибка");
+            Console.WriteLine(e.Message);
         }
         finally
         {
-            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
-                CancellationToken.None);
+            if (_clientSocket.State == WebSocketState.Open)
+            {
+                await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client closed",
+                    CancellationToken.None);
+            }
+
             _clientSocket.Dispose();
         }
     }

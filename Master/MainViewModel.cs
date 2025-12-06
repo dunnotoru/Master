@@ -64,7 +64,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             throw new ArgumentException();
         }
-        
 
         serverCts = new CancellationTokenSource();
         serverRun = Task.Run(async () =>

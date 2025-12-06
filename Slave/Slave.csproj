@@ -11,10 +11,4 @@
       <ProjectReference Include="..\Shared\Shared.csproj" />
     </ItemGroup>
 
-    <ItemGroup>
-      <None Update="application.properties">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
-    </ItemGroup>
-
 </Project>

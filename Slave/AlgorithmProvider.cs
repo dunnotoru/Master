@@ -7,7 +7,7 @@ namespace Slave;
 public class AlgorithmProvider
 {
     public string ModuleDirectory { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Lab", "SlaveModules");
+        Path.Combine(Environment.CurrentDirectory, "SlaveModules");
 
     private Dictionary<string, IAlgorithmExecutor> _modules = new Dictionary<string, IAlgorithmExecutor>();
 
