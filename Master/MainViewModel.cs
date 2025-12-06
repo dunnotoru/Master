@@ -47,12 +47,31 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _uiContext = SynchronizationContext.Current;
         Clients.CollectionChanged += (_, _) => EnqueueJobCommand.NotifyCanExecuteChanged();
 
+        using StreamReader propsFile = File.OpenText("./application.properties");
+        string? line = propsFile.ReadLine();
+        if (line is null)
+        {
+            throw new ArgumentNullException(nameof(line), "listen-string was null");
+        }
+
+        string[] kv = line.Split('=', 2);
+        string k = kv[0];
+        string v = kv[1];
+
+        Debug.Print("{1}={0}",k, v);
+        
+        if (!"listener-prefix".Equals(k))
+        {
+            throw new ArgumentException();
+        }
+        
+
         serverCts = new CancellationTokenSource();
         serverRun = Task.Run(async () =>
         {
             try
             {
-                await _server.RunAsync("http://+:5000/master/", serverCts.Token);
+                await _server.RunAsync(v, serverCts.Token);
             }
             catch (Exception ex)
             {

@@ -42,39 +42,23 @@ public sealed class ClientHandler : IDisposable
         Task send = SendLoopAsync(cancellation);
         Task listen = ReceiveLoopAsync(cancellation);
         Task first = await Task.WhenAny(send, listen);
-        
+
         try
         {
             await first;
         }
-        catch (WebSocketException ex)
-        {
-            foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
-            {
-                pending.TrySetCanceled(CancellationToken.None);
-            }
-
-            if (_clientSocket.State == WebSocketState.Open)
-            {
-                await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
-                    CancellationToken.None);
-            }
-
-            _pendingAssignments.Clear();
-            ConnectionClosed?.Invoke(this);
-            Debug.Print("{0}", ex);
-        }
         catch (Exception ex)
         {
-            Debug.WriteLine(ex);
-            if (_clientSocket.State == WebSocketState.Open)
-            {
-                await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
-                    CancellationToken.None);
-            }
+            Debug.Print("{0}", ex);
         }
         finally
         {
+            if (_clientSocket.State == WebSocketState.Open)
+            {
+                await _clientSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Internal Server Error",
+                    CancellationToken.None);
+            }
+
             foreach (TaskCompletionSource<AssignmentResult> pending in _pendingAssignments.Values)
             {
                 pending.TrySetCanceled(CancellationToken.None);
@@ -101,12 +85,13 @@ public sealed class ClientHandler : IDisposable
         }
     }
 
+    private readonly byte[] _buffer = new byte[BufferSize];
+
     private async Task ReceiveLoopAsync(CancellationToken cancellation)
     {
-        byte[] buffer = new byte[BufferSize];
         while (_clientSocket.State == WebSocketState.Open && !cancellation.IsCancellationRequested)
         {
-            ClientMessage? message = await ReceiveMessage(buffer, cancellation);
+            ClientMessage? message = await ReceiveMessage(_buffer, cancellation);
             if (message is not null)
             {
                 await HandleMessageAsync(message);
@@ -216,7 +201,7 @@ public sealed class ClientHandler : IDisposable
     {
         AssignmentResult? response = MemoryPackSerializer.Deserialize<AssignmentResult>(message.Payload);
         if (response is null) return;
-    
+
         AssignmentIdentifier id = response.Id;
         if (_pendingAssignments.TryGetValue(id, out TaskCompletionSource<AssignmentResult>? tcs))
         {

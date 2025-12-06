@@ -27,17 +27,23 @@ public class SlaveClient
         await _clientSocket.ConnectAsync(uri, connectCancellation);
         Console.WriteLine("Success");
 
+        Task first = await Task.WhenAny(
+            SendLoopAsync(cancellation),
+            ReceiveLoopAsync(cancellation)
+        );
+
+        AppDomain.CurrentDomain.ProcessExit += async (sender, args) =>
+        {
+            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
+                CancellationToken.None);
+        };
+
         try
         {
-            Task send = SendLoopAsync(cancellation);
-            Task receive = ReceiveLoopAsync(cancellation);
-            Task first = await Task.WhenAny(send, receive);
             await first;
         }
         catch (OperationCanceledException)
         {
-            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
-                CancellationToken.None);
             Console.WriteLine("Keyboard interrupt");
         }
         catch (Exception e)
@@ -47,6 +53,8 @@ public class SlaveClient
         }
         finally
         {
+            await _clientSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Keyboard interrupt",
+                CancellationToken.None);
             _clientSocket.Dispose();
         }
     }
